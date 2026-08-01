@@ -1,0 +1,13 @@
+[project]
+name = "foundry-translator"
+version = "0.1.0"
+description = "Translate Babele JSON files"
+requires-python = ">=3.12"
+
+dependencies = [
+    "openai>=2.0.0",
+    "orjson",
+    "python-dotenv",
+    "rich",
+    "beautifulsoup4"
+]
