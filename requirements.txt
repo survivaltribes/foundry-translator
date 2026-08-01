@@ -1,0 +1,5 @@
+openai>=2.0.0
+orjson
+python-dotenv
+rich
+beautifulsoup4
