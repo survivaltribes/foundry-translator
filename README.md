@@ -1,0 +1,2 @@
+# foundry-translator
+foundry gpt
