@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,8 @@ class JsonWriter:
 
         for entry in entries:
             self._apply_translation(payload, entry.path, entry.source)
+
+        self._validate_payload(payload)
 
         destination = source_file.with_suffix(".translated.json")
         with destination.open("wb") as handle:
@@ -56,3 +59,27 @@ class JsonWriter:
         elif isinstance(current, list):
             if isinstance(last_segment, int) and last_segment < len(current):
                 current[last_segment] = value
+
+    def _validate_payload(self, payload: Any) -> None:
+        serialized = orjson.dumps(payload)
+        if not serialized:
+            raise ValueError("Translated JSON is empty")
+
+        text = serialized.decode("utf-8")
+        if "__FOUNDRY_PLACEHOLDER_" in text:
+            raise ValueError("Found unresolved placeholders in translated JSON")
+
+        if self._contains_invalid_macros(text):
+            raise ValueError("Found invalid Foundry macros in translated JSON")
+
+    def _contains_invalid_macros(self, text: str) -> bool:
+        pattern = re.compile(r"\{\{[^{}]+\}\}|\[\[[^\]]+\]\]")
+        matches = list(pattern.finditer(text))
+        return any(not self._looks_like_valid_macro(match.group(0)) for match in matches)
+
+    def _looks_like_valid_macro(self, value: str) -> bool:
+        if value.startswith("{{") and value.endswith("}}"):
+            return bool(value[2:-2].strip())
+        if value.startswith("[[") and value.endswith("]]"):
+            return bool(value[2:-2].strip())
+        return False

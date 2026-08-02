@@ -1,0 +1,11 @@
+{
+  "name": "Bonjour",
+  "description": "Bonjour @Embed[foo] and {{macro}}",
+  "items": [
+    {
+      "name": "Bienvenue",
+      "text": "<p class=\"hero\">Bonjour @Embed[foo] {{macro}}</p>",
+      "uuid": "123e4567-e89b-12d3-a456-426614174000"
+    }
+  ]
+}
