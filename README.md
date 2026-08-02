@@ -4,15 +4,10 @@ Translate Babele JSON files for Foundry VTT using OpenAI.
 
 ## Features
 
-- Detect Babele JSON files
-- Translate only translatable fields
-- Preserve UUIDs
-- Preserve HTML
-- Preserve Foundry links
-- D&D glossary
-- Translation cache
-- Batch translation
-- Resume after interruption
+- Recursively scan exported JSON files for translatable content
+- Detect only supported translatable fields
+- Return structured `TranslationEntry` objects with file, JSON path, field name, and source text
+- Leave the JSON files unchanged
 
 ## Supported fields
 
@@ -27,13 +22,32 @@ Translate Babele JSON files for Foundry VTT using OpenAI.
 ## Installation
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
 ## Usage
 
+### Scan a folder
+
 ```bash
-python translate.py "C:\Foundry\modules\my-module\fr\compendium-export"
+python3 test_scanner.py /path/to/babele-export
+```
+
+If no path is provided, the script prompts for one.
+
+### Python API
+
+```python
+from pathlib import Path
+from foundry_translator.scanner import Scanner
+
+scanner = Scanner(Path("/path/to/babele-export"))
+documents, entries = scanner.scan()
+
+for entry in entries:
+    print(entry.file, entry.path, entry.field, entry.source)
 ```
 
 ## Status
