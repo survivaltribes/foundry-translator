@@ -66,7 +66,7 @@ class JsonWriter:
             raise ValueError("Translated JSON is empty")
 
         text = serialized.decode("utf-8")
-        if "__FOUNDRY_PLACEHOLDER_" in text:
+        if "__FOUNDRY_PLACEHOLDER_" in text or "__FT_" in text:
             raise ValueError("Found unresolved placeholders in translated JSON")
 
         if self._contains_invalid_macros(text):

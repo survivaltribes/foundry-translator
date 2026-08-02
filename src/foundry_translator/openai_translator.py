@@ -15,7 +15,7 @@ from openai import APITimeoutError
 from openai import APIStatusError
 from openai import OpenAI
 
-from .markup import MarkupProtector
+from .protect import Protect
 from .scanner import TranslationEntry
 
 
@@ -45,6 +45,7 @@ class OpenAITranslator:
         model: str = "gpt-5.5",
         target_language: str = "French",
         batch_size: int = 20,
+        max_prompt_chars: int = 40000,
         max_retries: int = 3,
         timeout: float = 60.0,
         retry_delay: float = 0.5,
@@ -61,6 +62,8 @@ class OpenAITranslator:
 
         if batch_size <= 0:
             raise ValueError("batch_size must be greater than zero")
+        if max_prompt_chars <= 0:
+            raise ValueError("max_prompt_chars must be greater than zero")
         if max_retries < 1:
             raise ValueError("max_retries must be at least 1")
         if timeout <= 0:
@@ -84,7 +87,7 @@ class OpenAITranslator:
         self.client = client or OpenAI(api_key=self.api_key, timeout=self.timeout)
         self.logger = logger or logging.getLogger(__name__)
         self.cache = cache
-        self.protector = MarkupProtector()
+        self.protector = Protect()
 
     def translate_batch(
         self,
@@ -154,12 +157,17 @@ class OpenAITranslator:
         if not pending_groups:
             return [result for result in results if result is not None]
 
-        protected_texts = [protected_text for _, _, protected_text in pending_groups]
-        translated_protected_texts = self._translate_batch(
-            [protected.protected for protected in protected_texts],
-            source_language="English",
-            target_language=self.target_language,
-        )
+        translated_protected_texts: list[str] = []
+        for start in range(0, len(pending_groups), self.batch_size):
+            chunk = pending_groups[start : start + self.batch_size]
+            chunk_texts = [protected.protected for _, _, protected in chunk]
+            translated_protected_texts.extend(
+                self.translate_batch(
+                    chunk_texts,
+                    source_language="English",
+                    target_language=self.target_language,
+                )
+            )
 
         for (source, matching_entries, protected_text), translated_protected_text in zip(
             pending_groups,
@@ -187,26 +195,83 @@ class OpenAITranslator:
         if not texts:
             return []
 
-        prompt = self._build_prompt(texts, source_language=source_language, target_language=target_language, glossary=glossary)
-        for attempt in range(1, self.max_retries + 1):
+        return self._translate_with_resilience(
+            texts,
+            source_language=source_language,
+            target_language=target_language,
+            glossary=glossary,
+            batch_number=1,
+            total_batches=1,
+        )
+
+    def _translate_with_resilience(
+        self,
+        texts: list[str],
+        *,
+        source_language: str,
+        target_language: str,
+        glossary: dict[str, str] | None = None,
+        batch_number: int = 1,
+        total_batches: int = 1,
+    ) -> list[str]:
+        if not texts:
+            return []
+
+        if len(texts) == 1:
+            prompt = self._build_prompt(
+                texts,
+                source_language=source_language,
+                target_language=target_language,
+                glossary=glossary,
+            )
+            self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
             try:
-                self.logger.info(
-                    "requesting translations",
+                response_text = self._call_openai(prompt)
+                translations = self._parse_response(response_text, expected_count=len(texts))
+                self._log_batch_success(texts, batch_number=batch_number, total_batches=total_batches)
+                return translations
+            except (APITimeoutError, APIConnectionError, APIStatusError) as exc:  # type: ignore[misc]
+                self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
+                raise
+            except OpenAITranslatorCountError as exc:
+                self.logger.warning(
+                    "translation count mismatch for final batch",
                     extra={
+                        "batch_number": batch_number,
+                        "total_batches": total_batches,
                         "batch_size": len(texts),
-                        "attempt": attempt,
-                        "model": self.model,
-                        "source_language": source_language,
-                        "target_language": target_language,
+                        "error": str(exc),
                     },
                 )
+                raise
+            except Exception as exc:  # pragma: no cover - defensive guard
+                self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
+                if isinstance(exc, OpenAITranslatorRequestError):
+                    raise
+                raise OpenAITranslatorRequestError("OpenAI request failed") from exc
+
+        prompt = self._build_prompt(
+            texts,
+            source_language=source_language,
+            target_language=target_language,
+            glossary=glossary,
+        )
+        self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
+
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                started_at = time.perf_counter()
                 response_text = self._call_openai(prompt)
+                duration = time.perf_counter() - started_at
                 translations = self._parse_response(response_text, expected_count=len(texts))
                 self.logger.info(
                     "translations completed",
                     extra={
+                        "batch_number": batch_number,
+                        "total_batches": total_batches,
                         "batch_size": len(texts),
                         "attempt": attempt,
+                        "duration_seconds": round(duration, 6),
                         "model": self.model,
                     },
                 )
@@ -218,6 +283,8 @@ class OpenAITranslator:
                 self.logger.warning(
                     "translation count mismatch; retrying",
                     extra={
+                        "batch_number": batch_number,
+                        "total_batches": total_batches,
                         "batch_size": len(texts),
                         "attempt": attempt,
                         "delay_seconds": delay,
@@ -226,41 +293,141 @@ class OpenAITranslator:
                 )
                 time.sleep(delay)
             except (APITimeoutError, APIConnectionError, APIStatusError) as exc:  # type: ignore[misc]
-                if attempt >= self.max_retries:
+                self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
+                if len(texts) <= 1:
                     raise OpenAITranslatorTimeoutError(
                         f"OpenAI request failed after {self.max_retries} attempts"
                     ) from exc
-                delay = self.retry_delay * (self.retry_backoff_factor ** (attempt - 1))
+                midpoint = len(texts) // 2
+                if midpoint < 1:
+                    raise OpenAITranslatorTimeoutError(
+                        f"OpenAI request failed after {self.max_retries} attempts"
+                    ) from exc
+                left_batch = texts[:midpoint]
+                right_batch = texts[midpoint:]
                 self.logger.warning(
-                    "translation request failed; retrying",
+                    "splitting batch after transport failure",
                     extra={
+                        "batch_number": batch_number,
+                        "total_batches": total_batches,
                         "batch_size": len(texts),
-                        "attempt": attempt,
-                        "delay_seconds": delay,
-                        "error": str(exc),
+                        "split_into": [len(left_batch), len(right_batch)],
+                        "error_type": exc.__class__.__name__,
                     },
                 )
-                time.sleep(delay)
+                left_results = self._translate_with_resilience(
+                    left_batch,
+                    source_language=source_language,
+                    target_language=target_language,
+                    glossary=glossary,
+                    batch_number=batch_number,
+                    total_batches=total_batches + 1,
+                )
+                right_results = self._translate_with_resilience(
+                    right_batch,
+                    source_language=source_language,
+                    target_language=target_language,
+                    glossary=glossary,
+                    total_batches=total_batches + 1,
+                    batch_number=batch_number + 1,
+                )
+                return [*left_results, *right_results]
             except Exception as exc:  # pragma: no cover - defensive guard
+                self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
+                if isinstance(exc, OpenAITranslatorRequestError):
+                    raise
                 raise OpenAITranslatorRequestError("OpenAI request failed") from exc
 
         raise OpenAITranslatorRequestError("OpenAI request failed")
 
     def _call_openai(self, prompt: str) -> str:
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            timeout=self.timeout,
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "input": prompt,
+        }
+        if self.timeout is not None:
+            kwargs["timeout"] = self.timeout
+
+        print("===== OPENAI REQUEST =====")
+        print(f"model={self.model}")
+        print(f"prompt_size_bytes={len(prompt.encode('utf-8'))}")
+        print(f"prompt_size_chars={len(prompt)}")
+        print(f"batch_text_count={len(prompt.splitlines())}")
+        print(f"timeout={kwargs.get('timeout')}")
+        started_at = time.perf_counter()
+        try:
+            response = self.client.responses.create(**kwargs)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            elapsed = time.perf_counter() - started_at
+            print("===== RESPONSE RECEIVED =====")
+            print(f"elapsed_seconds={elapsed:.6f}")
+            print(f"exception_class={exc.__class__.__name__}")
+            status_code = None
+            if hasattr(exc, "status_code"):
+                status_code = getattr(exc, "status_code")
+            elif hasattr(exc, "response") and getattr(exc, "response", None) is not None:
+                status_code = getattr(exc.response, "status_code", None)
+            print(f"status_code={status_code}")
+            print(f"exception_message={exc}")
+            raise
+
+        elapsed = time.perf_counter() - started_at
+        print("===== RESPONSE RECEIVED =====")
+        print(f"elapsed_seconds={elapsed:.6f}")
+        output_text = getattr(response, "output_text", "")
+        print(f"output_text_length={len(output_text)}")
+        return output_text
+
+    def _log_batch_start(self, texts: list[str], *, batch_number: int, total_batches: int, prompt: str) -> None:
+        self.logger.info(
+            "requesting translations",
+            extra={
+                "batch_number": batch_number,
+                "total_batches": total_batches,
+                "batch_size": len(texts),
+                "estimated_prompt_size": len(prompt.encode("utf-8")),
+                "model": self.model,
+            },
         )
-        return getattr(response, "output_text", "")
+
+    def _log_batch_success(self, texts: list[str], *, batch_number: int, total_batches: int) -> None:
+        self.logger.info(
+            "translations completed",
+            extra={
+                "batch_number": batch_number,
+                "total_batches": total_batches,
+                "batch_size": len(texts),
+                "model": self.model,
+            },
+        )
+
+    def _log_openai_exception(self, exc: Exception, *, batch_number: int, total_batches: int) -> None:
+        status_code = None
+        message = str(exc)
+        if hasattr(exc, "status_code"):
+            status_code = getattr(exc, "status_code")
+        elif hasattr(exc, "response") and getattr(exc, "response", None) is not None:
+            status_code = getattr(exc.response, "status_code", None)
+
+        self.logger.error(
+            "OpenAI request failed",
+            extra={
+                "batch_number": batch_number,
+                "total_batches": total_batches,
+                "exception_class": exc.__class__.__name__,
+                "status_code": status_code,
+                "error_message": message,
+            },
+        )
 
     def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
+        """Restore protected markers into translated text while preserving surrounding content."""
+
         if not translated_text:
             return translated_text
 
-        matches = list(re.finditer(r"__FOUNDRY_PLACEHOLDER_[0-9]+__", protected_text.protected))
+        placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
+        matches = list(placeholder_pattern.finditer(protected_text.protected))
         if not matches:
             return translated_text
 
@@ -268,7 +435,8 @@ class OpenAITranslator:
         return self.protector.restore(protected_text, translated_masked_text)
 
     def _inject_translation_into_masked_text(self, masked_text: str, translated_text: str) -> str:
-        matches = list(re.finditer(r"__FOUNDRY_PLACEHOLDER_[0-9]+__", masked_text))
+        placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
+        matches = list(placeholder_pattern.finditer(masked_text))
         if not matches:
             return translated_text
 
@@ -294,9 +462,6 @@ class OpenAITranslator:
 
         result.append(tail)
         return "".join(result)
-
-    def _contains_placeholder(self, text: str) -> bool:
-        return "__FOUNDRY_PLACEHOLDER_" in text
 
     def _build_prompt(
         self,

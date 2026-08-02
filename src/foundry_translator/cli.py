@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
+from .openai_translator import OpenAITranslator
 from .pipeline import Pipeline
-from .translator import DummyTranslator
+from .translator import DummyTranslator, Translator
 from .writer import JsonWriter
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m foundry_translator")
     subparsers = parser.add_subparsers(dest="command")
+    subparsers.required = True
 
     run_parser = subparsers.add_parser("run", help="Translate a source directory")
     run_parser.add_argument("--input", required=True, help="Directory containing the source JSON files")
@@ -27,6 +28,30 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("output_directory", help="Directory containing generated translated JSON files")
 
     return parser
+
+
+def build_translator(translator: Translator | None = None) -> Translator:
+    if translator is not None:
+        return translator
+
+    api_key = None
+    try:
+        import os
+
+        api_key = os.getenv("OPENAI_API_KEY")
+    except Exception:  # pragma: no cover - defensive guard
+        api_key = None
+
+    if api_key:
+        return OpenAITranslator(
+            api_key=api_key,
+            model="gpt-4.1-mini",
+            target_language="French",
+            batch_size=5,
+        )
+
+    logger.warning("OPENAI_API_KEY not set; falling back to the dummy translator")
+    return DummyTranslator()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Input directory does not exist: %s", input_dir)
         return 2
 
-    pipeline = Pipeline(translator=DummyTranslator())
+    pipeline = Pipeline(translator=build_translator())
     result = pipeline.run(input_dir, output_dir)
 
     logger.info("Files analyzed: %s", result.scanned_files)

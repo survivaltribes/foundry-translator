@@ -22,26 +22,29 @@ class ProtectedText:
 
     original: str
     protected: str
-    placeholders: dict[str, Placeholder]
+    placeholders: dict[str, Placeholder | str]
 
 
 class Protect:
-    """Protect Foundry-specific tokens before sending text to a translator.
-
-    The implementation preserves the original text, replaces protected
-    constructs with deterministic placeholders, and restores the original
-    tokens exactly once after translation.
-    """
+    """Protect Foundry-specific tokens before sending text to a translator."""
 
     _PLACEHOLDER_PREFIX: Final[str] = "__FT_"
     _PLACEHOLDER_PATTERN: Final[re.Pattern[str]] = re.compile(r"__FT_[A-Z_]+_\d{5}__")
 
-    _UUID_PATTERN: Final[re.Pattern[str]] = re.compile(r"@UUID\[[^\]]+\]")
-    _EMBED_PATTERN: Final[re.Pattern[str]] = re.compile(r"@Embed\[[^\]]+\]")
-    _REFERENCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"&Reference\[[^\]]+\]")
+    _UUID_PATTERN: Final[re.Pattern[str]] = re.compile(r"@UUID\[[^\]]*\]")
+    _EMBED_PATTERN: Final[re.Pattern[str]] = re.compile(r"@Embed\[[^\]]*\]")
+    _CHECK_PATTERN: Final[re.Pattern[str]] = re.compile(r"@Check\[[^\]]*\]")
+    _DAMAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"@Damage\[[^\]]*\]")
+    _TEMPLATE_PATTERN: Final[re.Pattern[str]] = re.compile(r"@Template\[[^\]]*\]")
+    _REFERENCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"&Reference\[[^\]]*\]")
     _DOUBLE_BRACKET_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[\[[^\]]+\]\]")
+    _MACRO_PATTERN: Final[re.Pattern[str]] = re.compile(r"\{\{[^{}]+\}\}")
+    _UUID_TOKEN_PATTERN: Final[re.Pattern[str]] = re.compile(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+    )
     _MARKDOWN_LINK_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[[^\]]+\]\([^\)]+\)")
     _HTML_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"<[^>]+>")
+    _ATTRIBUTE_PATTERN: Final[re.Pattern[str]] = re.compile(r'\b([a-zA-Z_:][-a-zA-Z0-9_:.]*)="[^"]*"')
     _ROLL_COMMAND_PATTERN: Final[re.Pattern[str]] = re.compile(
         r"\b(?:\d+d\d+|\d+d\d+[+-]?\d*|@[a-zA-Z]+\[[^\]]+\])\b"
     )
@@ -50,10 +53,16 @@ class Protect:
     _PATTERNS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         ("UUID", _UUID_PATTERN),
         ("EMBED", _EMBED_PATTERN),
+        ("CHECK", _CHECK_PATTERN),
+        ("DAMAGE", _DAMAGE_PATTERN),
+        ("TEMPLATE", _TEMPLATE_PATTERN),
         ("REFERENCE", _REFERENCE_PATTERN),
         ("DOUBLE_BRACKET", _DOUBLE_BRACKET_PATTERN),
+        ("MACRO", _MACRO_PATTERN),
+        ("UUID_TOKEN", _UUID_TOKEN_PATTERN),
         ("MARKDOWN_LINK", _MARKDOWN_LINK_PATTERN),
         ("HTML", _HTML_TAG_PATTERN),
+        ("ATTRIBUTE", _ATTRIBUTE_PATTERN),
         ("ROLL_COMMAND", _ROLL_COMMAND_PATTERN),
         ("IMAGE", _IMAGE_REFERENCE_PATTERN),
     )
@@ -64,7 +73,7 @@ class Protect:
         if not text:
             return ProtectedText(original=text, protected=text, placeholders={})
 
-        placeholders: dict[str, Placeholder] = {}
+        placeholders: dict[str, Placeholder | str] = {}
         counts: dict[str, int] = {category: 0 for category, _pattern in self._PATTERNS}
         result: list[str] = []
         cursor = 0
@@ -105,13 +114,18 @@ class Protect:
         protected = "".join(result)
         return ProtectedText(original=text, protected=protected, placeholders=placeholders)
 
-    def restore(self, protected_text: ProtectedText) -> str:
+    def restore(
+        self,
+        protected_text: ProtectedText,
+        translated_text: str | None = None,
+    ) -> str:
         """Restore protected tokens into the translated masked text."""
 
         if not protected_text.placeholders:
-            return protected_text.protected
+            return protected_text.protected if translated_text is None else translated_text
 
-        placeholders_in_text = self._find_placeholders(protected_text.protected)
+        text_to_restore = protected_text.protected if translated_text is None else translated_text
+        placeholders_in_text = self._find_placeholders(text_to_restore)
         if self._has_duplicate_placeholders(placeholders_in_text):
             raise ValueError("Duplicate placeholders detected in protected text")
 
@@ -134,15 +148,12 @@ class Protect:
         if extra:
             raise ValueError(f"Unexpected placeholders not present in protected text: {sorted(extra)}")
 
-        restored = protected_text.protected
+        restored = text_to_restore
         for placeholder_name in placeholders_in_text:
             placeholder = protected_text.placeholders.get(placeholder_name)
             if placeholder is None:
                 raise ValueError(f"Placeholder not found in mapping: {placeholder_name}")
-            if isinstance(placeholder, Placeholder):
-                replacement = placeholder.original
-            else:
-                replacement = str(placeholder)
+            replacement = placeholder.original if isinstance(placeholder, Placeholder) else str(placeholder)
             restored = restored.replace(placeholder_name, replacement, 1)
         return restored
 
@@ -167,13 +178,17 @@ class Protect:
         return bool(re.fullmatch(r"__FT_[A-Z_]+_\d{5}__", placeholder_name))
 
 
+class MarkupProtector(Protect):
+    """Backward-compatible name for the shared protection implementation."""
+
+
 def protect(text: str) -> ProtectedText:
     """Convenience function for protecting text."""
 
     return Protect().protect(text)
 
 
-def restore(protected_text: ProtectedText) -> str:
+def restore(protected_text: ProtectedText, translated_text: str | None = None) -> str:
     """Convenience function for restoring protected text."""
 
-    return Protect().restore(protected_text)
+    return Protect().restore(protected_text, translated_text)

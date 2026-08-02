@@ -26,6 +26,15 @@ def test_translation_cache_persists_entries(tmp_path: Path) -> None:
     assert reloaded.get("Hello") == "Bonjour"
 
 
+def test_translation_cache_ignores_invalid_on_disk_payload(tmp_path: Path) -> None:
+    cache_path = tmp_path / "translation_cache.json"
+    cache_path.write_text("{not valid json", encoding="utf-8")
+
+    cache = TranslationCache(cache_path)
+
+    assert cache.get("Hello") is None
+
+
 def test_openai_translator_reuses_cached_translations_without_calling_openai(tmp_path: Path) -> None:
     client = Mock()
     client.responses.create.return_value = SimpleNamespace(output_text="Bonjour")

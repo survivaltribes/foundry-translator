@@ -38,3 +38,4 @@ Thumbs.db
 .vscode/settings.json
 .vscode/launch.json
 git-status.log
+output*.log
