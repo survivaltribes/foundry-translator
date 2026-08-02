@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -26,16 +25,12 @@ class MockOpenAITranslator(OpenAITranslator):
         )
 
     def _call_openai(self, prompt: str) -> str:
-        entries = []
-        for line in prompt.splitlines():
-            if not line.strip():
-                continue
-            match = re.match(r"^\d+\.\s*(.+)$", line)
-            if match:
-                entries.append(match.group(1))
-
-        translations = [self._translate_entry(entry) for entry in entries]
-        return "\n".join(translations)
+        request_items = self._extract_input_items_from_prompt(prompt)
+        translations = [
+            {"id": item["id"], "translation": self._translate_entry(item["text"])}
+            for item in request_items
+        ]
+        return json.dumps({"translations": translations})
 
     def _translate_entry(self, text: str) -> str:
         if "Welcome" in text or "Bienvenue" in text:

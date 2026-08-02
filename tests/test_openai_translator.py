@@ -14,7 +14,16 @@ from foundry_translator.scanner import TranslationEntry
 
 def test_openai_translator_preserves_order_and_count() -> None:
     client = Mock()
-    response = SimpleNamespace(output_text="Bonjour\nSalut")
+    response = SimpleNamespace(
+        output_text=json.dumps(
+            {
+                "translations": [
+                    {"id": 1, "translation": "Bonjour"},
+                    {"id": 2, "translation": "Salut"},
+                ]
+            }
+        )
+    )
     client.responses.create.return_value = response
 
     translator = OpenAITranslator(
@@ -50,8 +59,15 @@ def test_translate_batch_batches_by_prompt_size() -> None:
 
     def fake_call_openai(prompt: str) -> str:
         observed_prompts.append(prompt)
-        batch_size = len([line for line in prompt.splitlines() if line[:1].isdigit()])
-        return json.dumps([f"translated-{index}" for index in range(batch_size)])
+        request_items = translator._extract_input_items_from_prompt(prompt)
+        return json.dumps(
+            {
+                "translations": [
+                    {"id": item["id"], "translation": f"translated-{item['id']}"}
+                    for item in request_items
+                ]
+            }
+        )
 
     translator._call_openai = fake_call_openai  # type: ignore[assignment]
 
@@ -80,8 +96,15 @@ def test_translate_batches_entry_payloads_by_prompt_size() -> None:
 
     def fake_call_openai(prompt: str) -> str:
         observed_prompts.append(prompt)
-        batch_size = len([line for line in prompt.splitlines() if line[:1].isdigit()])
-        return json.dumps([f"translated-{index}" for index in range(batch_size)])
+        request_items = translator._extract_input_items_from_prompt(prompt)
+        return json.dumps(
+            {
+                "translations": [
+                    {"id": item["id"], "translation": f"translated-{item['id']}"}
+                    for item in request_items
+                ]
+            }
+        )
 
     translator._call_openai = fake_call_openai  # type: ignore[assignment]
 
@@ -97,7 +120,7 @@ def test_translate_batches_entry_payloads_by_prompt_size() -> None:
     assert len(observed_prompts) >= 1
 
 
-def test_count_mismatch_persists_full_prompt_and_response(
+def test_invalid_json_persists_full_prompt_and_response_and_logs_parse_error(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -109,7 +132,7 @@ def test_count_mismatch_persists_full_prompt_and_response(
         max_retries=1,
     )
 
-    full_response = "only-one-line"
+    full_response = "{not-json"
     prompt_path = tmp_path / "debug" / "failed_prompt.txt"
     response_path = tmp_path / "debug" / "failed_response.txt"
     prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,7 +150,7 @@ def test_count_mismatch_persists_full_prompt_and_response(
     translator._call_openai = fake_call_openai  # type: ignore[assignment]
     caplog.set_level("INFO")
 
-    with pytest.raises(OpenAITranslatorCountError):
+    with pytest.raises(OpenAITranslatorCountError, match="Response was not valid JSON"):
         translator.translate_batch(
             ["first", "second"],
             source_language="English",
@@ -142,6 +165,7 @@ def test_count_mismatch_persists_full_prompt_and_response(
     )
     assert prompt_path.read_text(encoding="utf-8") == expected_prompt
     assert response_path.read_text(encoding="utf-8") == full_response
-    assert any(record.getMessage() == "saved OpenAI count mismatch debug artifacts" for record in caplog.records)
+    assert any(record.getMessage() == "saved OpenAI response debug artifacts" for record in caplog.records)
+    assert any(record.getMessage() == "translation response parse/validation failed" for record in caplog.records)
     assert any(getattr(record, "prompt_path", None) == str(prompt_path.resolve()) for record in caplog.records)
     assert any(getattr(record, "response_path", None) == str(response_path.resolve()) for record in caplog.records)

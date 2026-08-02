@@ -36,6 +36,27 @@ class OpenAITranslatorCountError(OpenAITranslatorError):
     """Raised when the API returns an unexpected number of translations."""
 
 
+TRANSLATION_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["translations"],
+    "properties": {
+        "translations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["id", "translation"],
+                "properties": {
+                    "id": {"type": "integer"},
+                    "translation": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
 class OpenAITranslator:
     """Translate text batches through the official OpenAI Responses API."""
 
@@ -329,58 +350,13 @@ class OpenAITranslator:
         if not texts:
             return []
 
-        if len(texts) == 1:
-            prompt = self._build_prompt(
-                texts,
-                source_language=source_language,
-                target_language=target_language,
-                glossary=glossary,
-            )
-            self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
-            response_text: str | None = None
-            try:
-                response_text = self._call_openai(prompt)
-                self._last_prompt_for_count_error = prompt
-                self._last_response_for_count_error = response_text
-                translations = self._parse_response(response_text, expected_count=len(texts))
-                self._log_batch_success(texts, batch_number=batch_number, total_batches=total_batches)
-                return translations
-            except (APITimeoutError, APIConnectionError, APIStatusError) as exc:  # type: ignore[misc]
-                self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
-                raise
-            except OpenAITranslatorCountError as exc:
-                expected_count, received_count = self._extract_translation_counts(exc)
-                prompt_path, response_path = self._persist_failed_count_debug_artifacts(
-                    prompt=prompt,
-                    response_text=response_text or "",
-                )
-                self.logger.warning(
-                    "translation count mismatch for final batch",
-                    extra={
-                        "expected_translation_count": expected_count,
-                        "received_translation_count": received_count,
-                        "batch_number": batch_number,
-                        "prompt_length": len(prompt),
-                        "prompt_path": str(prompt_path),
-                        "response_path": str(response_path),
-                        "total_batches": total_batches,
-                        "batch_size": len(texts),
-                        "error": str(exc),
-                    },
-                )
-                raise
-            except Exception as exc:  # pragma: no cover - defensive guard
-                self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
-                if isinstance(exc, OpenAITranslatorRequestError):
-                    raise
-                raise OpenAITranslatorRequestError("OpenAI request failed") from exc
-
         prompt = self._build_prompt(
             texts,
             source_language=source_language,
             target_language=target_language,
             glossary=glossary,
         )
+        requested_ids = [index for index, _ in enumerate(texts, start=1)]
         self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
 
         for attempt in range(1, self.max_retries + 1):
@@ -391,7 +367,7 @@ class OpenAITranslator:
                 self._last_prompt_for_count_error = prompt
                 self._last_response_for_count_error = response_text
                 duration = time.perf_counter() - started_at
-                translations = self._parse_response(response_text, expected_count=len(texts))
+                translations = self._parse_response(response_text, requested_ids=requested_ids)
                 self.logger.info(
                     "translations completed",
                     extra={
@@ -410,11 +386,23 @@ class OpenAITranslator:
                     prompt=prompt,
                     response_text=response_text or "",
                 )
+                self.logger.warning(
+                    "translation response parse/validation failed",
+                    extra={
+                        "batch_number": batch_number,
+                        "total_batches": total_batches,
+                        "batch_size": len(texts),
+                        "attempt": attempt,
+                        "error": str(exc),
+                        "prompt_path": str(prompt_path),
+                        "response_path": str(response_path),
+                    },
+                )
                 if attempt >= self.max_retries:
                     raise
                 delay = self.retry_delay * (self.retry_backoff_factor ** (attempt - 1))
                 self.logger.warning(
-                    "translation count mismatch; retrying",
+                    "translation response invalid; retrying",
                     extra={
                         "expected_translation_count": expected_count,
                         "received_translation_count": received_count,
@@ -482,11 +470,19 @@ class OpenAITranslator:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "input": prompt,
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "translation_batch",
+                    "strict": True,
+                    "schema": TRANSLATION_RESPONSE_SCHEMA,
+                }
+            },
         }
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
 
-        batch_size = len([line for line in prompt.splitlines() if line[:1].isdigit()])
+        batch_size = len(self._extract_input_items_from_prompt(prompt))
         prompt_size = len(prompt.encode("utf-8"))
         started_at = time.perf_counter()
         try:
@@ -614,7 +610,7 @@ class OpenAITranslator:
             prompt_path.write_text(prompt, encoding="utf-8")
             response_path.write_text(response_text, encoding="utf-8")
             self.logger.info(
-                "saved OpenAI count mismatch debug artifacts",
+                "saved OpenAI response debug artifacts",
                 extra={
                     "prompt_path": str(prompt_path.resolve()),
                     "response_path": str(response_path.resolve()),
@@ -676,6 +672,35 @@ class OpenAITranslator:
         result.append(tail)
         return "".join(result)
 
+    def _build_request_items(self, texts: list[str]) -> list[dict[str, Any]]:
+        return [{"id": index, "text": text} for index, text in enumerate(texts, start=1)]
+
+    def _extract_input_items_from_prompt(self, prompt: str) -> list[dict[str, Any]]:
+        marker = "Inputs JSON:"
+        if marker not in prompt:
+            return []
+
+        payload = prompt.split(marker, 1)[1].strip()
+        try:
+            parsed = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+
+        request_items: list[dict[str, Any]] = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                continue
+            identifier = item.get("id")
+            text = item.get("text")
+            if isinstance(identifier, bool) or not isinstance(identifier, int):
+                continue
+            if not isinstance(text, str):
+                continue
+            request_items.append({"id": identifier, "text": text})
+        return request_items
+
     def _build_prompt(
         self,
         texts: list[str],
@@ -686,8 +711,8 @@ class OpenAITranslator:
     ) -> str:
         instructions = [
             f"Translate the following texts from {source_language} to {target_language}.",
-            "Return exactly one translated line per input line, preserving the same order.",
-            "Do not add commentary, numbering, bullets, or extra prose.",
+            "Return only a JSON object with a translations array.",
+            "Use exactly the same ids provided in the input JSON.",
             "Keep placeholders, markup, and code-like tokens unchanged.",
             "Use deterministic, concise, natural phrasing.",
         ]
@@ -697,33 +722,63 @@ class OpenAITranslator:
             for term, translation in sorted(glossary.items()):
                 instructions.append(f"{term} -> {translation}")
 
-        lines = ["\n".join(instructions), "", "Inputs:"]
-        for index, text in enumerate(texts, start=1):
-            lines.append(f"{index}. {text}")
+        lines = ["\n".join(instructions), "", "Inputs JSON:"]
+        lines.append(json.dumps(self._build_request_items(texts), ensure_ascii=False, indent=2))
 
         return "\n".join(lines)
 
-    def _parse_response(self, response_text: str, *, expected_count: int) -> list[str]:
+    def _parse_response(self, response_text: str, *, requested_ids: list[int]) -> list[str]:
         if not response_text:
-            raise OpenAITranslatorCountError(f"Expected {expected_count} translations but received 0")
+            raise OpenAITranslatorCountError(f"Expected {len(requested_ids)} translations but received 0")
 
         text = response_text.strip()
-        if text.startswith("["):
-            try:
-                parsed = json.loads(text)
-            except json.JSONDecodeError as exc:
-                raise OpenAITranslatorCountError("Response was not valid JSON") from exc
-            if not isinstance(parsed, list):
-                raise OpenAITranslatorCountError("Expected a JSON array of translations")
-            if len(parsed) != expected_count:
-                raise OpenAITranslatorCountError(
-                    f"Expected {expected_count} translations but received {len(parsed)}"
-                )
-            return [str(item).strip() for item in parsed]
-
-        translations = [line.strip() for line in text.splitlines() if line.strip()]
-        if len(translations) != expected_count:
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
             raise OpenAITranslatorCountError(
-                f"Expected {expected_count} translations but received {len(translations)}"
-            )
-        return translations
+                f"Response was not valid JSON: {exc.msg} (line {exc.lineno}, column {exc.colno})"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise OpenAITranslatorCountError("Expected a JSON object with a translations array")
+        translations = parsed.get("translations")
+        if not isinstance(translations, list):
+            raise OpenAITranslatorCountError("Expected response.translations to be a JSON array")
+
+        translations_by_id: dict[int, str] = {}
+        duplicate_ids: list[int] = []
+        unexpected_ids: list[int] = []
+        requested_set = set(requested_ids)
+
+        for index, item in enumerate(translations, start=1):
+            if not isinstance(item, dict):
+                raise OpenAITranslatorCountError(
+                    f"Response item at index {index} must be an object with id and translation"
+                )
+
+            identifier = item.get("id")
+            translation = item.get("translation")
+            if isinstance(identifier, bool) or not isinstance(identifier, int):
+                raise OpenAITranslatorCountError(f"Response item at index {index} has non-integer id")
+            if not isinstance(translation, str):
+                raise OpenAITranslatorCountError(
+                    f"Response item for id {identifier} has non-string translation"
+                )
+
+            if identifier in translations_by_id:
+                duplicate_ids.append(identifier)
+            translations_by_id[identifier] = translation
+
+            if identifier not in requested_set:
+                unexpected_ids.append(identifier)
+
+        missing_ids = [identifier for identifier in requested_ids if identifier not in translations_by_id]
+        if duplicate_ids:
+            duplicates = sorted(set(duplicate_ids))
+            raise OpenAITranslatorCountError(f"Duplicate translation ids in response: {duplicates}")
+        if unexpected_ids:
+            extras = sorted(set(unexpected_ids))
+            raise OpenAITranslatorCountError(f"Unexpected translation ids in response: {extras}")
+        if missing_ids:
+            raise OpenAITranslatorCountError(f"Missing translation ids in response: {missing_ids}")
+
+        return [translations_by_id[identifier] for identifier in requested_ids]

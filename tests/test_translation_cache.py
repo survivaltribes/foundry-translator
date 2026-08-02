@@ -37,7 +37,9 @@ def test_translation_cache_ignores_invalid_on_disk_payload(tmp_path: Path) -> No
 
 def test_openai_translator_reuses_cached_translations_without_calling_openai(tmp_path: Path) -> None:
     client = Mock()
-    client.responses.create.return_value = SimpleNamespace(output_text="Bonjour")
+    client.responses.create.return_value = SimpleNamespace(
+        output_text='{"translations": [{"id": 1, "translation": "Bonjour"}]}'
+    )
 
     cache = TranslationCache(tmp_path / "translation_cache.json")
     translator = OpenAITranslator(

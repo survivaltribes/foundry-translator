@@ -47,7 +47,9 @@ def test_restore_removes_all_placeholders() -> None:
 
 def test_openai_translator_restores_markup_after_translation() -> None:
     client = Mock()
-    client.responses.create.return_value = SimpleNamespace(output_text="Bonjour")
+    client.responses.create.return_value = SimpleNamespace(
+        output_text='{"translations": [{"id": 1, "translation": "Bonjour"}]}'
+    )
 
     translator = OpenAITranslator(
         api_key="test-key",
