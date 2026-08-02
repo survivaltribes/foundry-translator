@@ -3,8 +3,29 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from foundry_translator.pipeline import Pipeline
+from foundry_translator.pipeline import Pipeline, TranslationProgressReporter
 from foundry_translator.translator import DummyTranslator
+
+
+def test_translation_progress_reporter_emits_batch_and_summary_output(capsys) -> None:
+    reporter = TranslationProgressReporter(total_texts=3, total_files=1, total_unique_texts=3)
+
+    reporter.on_request_completed(
+        batch_number=1,
+        total_batches=2,
+        batch_size=2,
+        prompt_size=256,
+        elapsed_seconds=0.4,
+        current_file="compendium.json",
+        translated_count=2,
+        total_texts=3,
+    )
+
+    captured = capsys.readouterr()
+    assert "batch=1/2" in captured.out
+    assert "translated=2/3" in captured.out
+    assert "file=compendium.json" in captured.out
+    assert "Translation summary:" in reporter.summary()
 
 
 def test_pipeline_writes_translated_output(tmp_path: Path) -> None:

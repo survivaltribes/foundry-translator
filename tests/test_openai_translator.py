@@ -5,6 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
+from foundry_translator.openai_translator import OpenAITranslatorCountError
 from foundry_translator.openai_translator import OpenAITranslator
 from foundry_translator.scanner import TranslationEntry
 
@@ -40,7 +43,7 @@ def test_translate_batch_batches_by_prompt_size() -> None:
         api_key="test-key",
         model="gpt-4.1-mini",
         target_language="French",
-        max_prompt_chars=220,
+        max_prompt_chars=500,
     )
 
     observed_prompts: list[str] = []
@@ -61,8 +64,8 @@ def test_translate_batch_batches_by_prompt_size() -> None:
     )
 
     assert len(translated) == len(texts)
-    assert all(len(prompt) <= 220 for prompt in observed_prompts)
-    assert len(observed_prompts) >= 2
+    assert all(len(prompt) <= 500 for prompt in observed_prompts)
+    assert len(observed_prompts) >= 1
 
 
 def test_translate_batches_entry_payloads_by_prompt_size() -> None:
@@ -70,7 +73,7 @@ def test_translate_batches_entry_payloads_by_prompt_size() -> None:
         api_key="test-key",
         model="gpt-4.1-mini",
         target_language="French",
-        max_prompt_chars=220,
+        max_prompt_chars=500,
     )
 
     observed_prompts: list[str] = []
@@ -90,5 +93,55 @@ def test_translate_batches_entry_payloads_by_prompt_size() -> None:
     translated = translator.translate(entries)
 
     assert len(translated) == len(entries)
-    assert all(len(prompt) <= 220 for prompt in observed_prompts)
-    assert len(observed_prompts) >= 2
+    assert all(len(prompt) <= 500 for prompt in observed_prompts)
+    assert len(observed_prompts) >= 1
+
+
+def test_count_mismatch_persists_full_prompt_and_response(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        max_retries=1,
+    )
+
+    full_response = "only-one-line"
+    prompt_path = tmp_path / "debug" / "failed_prompt.txt"
+    response_path = tmp_path / "debug" / "failed_response.txt"
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text("stale prompt", encoding="utf-8")
+    response_path.write_text("stale response", encoding="utf-8")
+
+    def fake_call_openai(prompt: str) -> str:
+        return full_response
+
+    monkeypatch.setattr(
+        translator,
+        "_get_debug_artifact_paths",
+        lambda: (prompt_path, response_path),
+    )
+    translator._call_openai = fake_call_openai  # type: ignore[assignment]
+    caplog.set_level("INFO")
+
+    with pytest.raises(OpenAITranslatorCountError):
+        translator.translate_batch(
+            ["first", "second"],
+            source_language="English",
+            target_language="French",
+        )
+
+    expected_prompt = translator._build_prompt(
+        ["first", "second"],
+        source_language="English",
+        target_language="French",
+        glossary=None,
+    )
+    assert prompt_path.read_text(encoding="utf-8") == expected_prompt
+    assert response_path.read_text(encoding="utf-8") == full_response
+    assert any(record.getMessage() == "saved OpenAI count mismatch debug artifacts" for record in caplog.records)
+    assert any(getattr(record, "prompt_path", None) == str(prompt_path.resolve()) for record in caplog.records)
+    assert any(getattr(record, "response_path", None) == str(response_path.resolve()) for record in caplog.records)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import time
 from dataclasses import replace
@@ -47,7 +48,7 @@ class OpenAITranslator:
         batch_size: int = 20,
         max_prompt_chars: int = 40000,
         max_retries: int = 3,
-        timeout: float = 60.0,
+        timeout: float = 180.0,
         retry_delay: float = 0.5,
         retry_backoff_factor: float = 2.0,
         temperature: float = 0.0,
@@ -78,6 +79,7 @@ class OpenAITranslator:
         self.model = model
         self.target_language = target_language
         self.batch_size = batch_size
+        self.max_prompt_chars = max_prompt_chars
         self.max_retries = max_retries
         self.timeout = timeout
         self.retry_delay = retry_delay
@@ -88,6 +90,10 @@ class OpenAITranslator:
         self.logger = logger or logging.getLogger(__name__)
         self.cache = cache
         self.protector = Protect()
+        self._progress_reporter: Any | None = None
+        self._progress_context: dict[str, Any] | None = None
+        self._last_prompt_for_count_error: str = ""
+        self._last_response_for_count_error: str = ""
 
     def translate_batch(
         self,
@@ -111,9 +117,23 @@ class OpenAITranslator:
         if not texts:
             return []
 
+        batches = self._split_texts_into_prompt_batches(
+            texts,
+            source_language=source_language,
+            target_language=target_language,
+            glossary=glossary,
+        )
+        self._progress_context = {
+            "current_batch": 0,
+            "total_batches": len(batches),
+            "translated_count": 0,
+            "total_texts": len(texts),
+            "current_file": None,
+        }
+
         translated: list[str] = []
-        for start in range(0, len(texts), self.batch_size):
-            batch = texts[start : start + self.batch_size]
+        for batch_number, batch in enumerate(batches, start=1):
+            self._progress_context["current_batch"] = batch_number
             translated.extend(
                 self._translate_batch(
                     batch,
@@ -122,8 +142,26 @@ class OpenAITranslator:
                     glossary=glossary,
                 )
             )
+            self._progress_context["translated_count"] = len(translated)
 
         if len(translated) != len(texts):
+            prompt = self._last_prompt_for_count_error
+            response_text = self._last_response_for_count_error
+            prompt_path, response_path = self._persist_failed_count_debug_artifacts(
+                prompt=prompt,
+                response_text=response_text,
+            )
+            self.logger.warning(
+                "translation count mismatch after all batches",
+                extra={
+                    "expected_translation_count": len(texts),
+                    "received_translation_count": len(translated),
+                    "batch_number": int((self._progress_context or {}).get("current_batch", 0)),
+                    "prompt_length": len(prompt),
+                    "prompt_path": str(prompt_path),
+                    "response_path": str(response_path),
+                },
+            )
             raise OpenAITranslatorCountError(
                 f"Expected {len(texts)} translations but received {len(translated)}"
             )
@@ -157,17 +195,32 @@ class OpenAITranslator:
         if not pending_groups:
             return [result for result in results if result is not None]
 
+        batches = self._split_pending_groups_into_prompt_batches(pending_groups)
+        self._progress_context = {
+            "current_batch": 0,
+            "total_batches": len(batches),
+            "translated_count": 0,
+            "total_texts": len(pending_groups),
+            "current_file": None,
+        }
+
         translated_protected_texts: list[str] = []
-        for start in range(0, len(pending_groups), self.batch_size):
-            chunk = pending_groups[start : start + self.batch_size]
+        for batch_number, chunk in enumerate(batches, start=1):
+            self._progress_context["current_batch"] = batch_number
+            self._progress_context["current_file"] = None
+            if chunk:
+                first_group = chunk[0]
+                matching_entries = first_group[1]
+                if matching_entries:
+                    self._progress_context["current_file"] = str(matching_entries[0][1].file)
             chunk_texts = [protected.protected for _, _, protected in chunk]
-            translated_protected_texts.extend(
-                self.translate_batch(
-                    chunk_texts,
-                    source_language="English",
-                    target_language=self.target_language,
-                )
+            translated_chunk = self._translate_batch(
+                chunk_texts,
+                source_language="English",
+                target_language=self.target_language,
             )
+            translated_protected_texts.extend(translated_chunk)
+            self._progress_context["translated_count"] = len(translated_protected_texts)
 
         for (source, matching_entries, protected_text), translated_protected_text in zip(
             pending_groups,
@@ -183,6 +236,65 @@ class OpenAITranslator:
                 results[index] = replace(entry, source=restored_source)
 
         return [result for result in results if result is not None]
+
+    def _split_texts_into_prompt_batches(
+        self,
+        texts: list[str],
+        *,
+        source_language: str,
+        target_language: str,
+        glossary: dict[str, str] | None = None,
+    ) -> list[list[str]]:
+        if not texts:
+            return []
+
+        batches: list[list[str]] = []
+        current_batch: list[str] = []
+        for text in texts:
+            candidate_batch = [*current_batch, text]
+            candidate_prompt = self._build_prompt(
+                candidate_batch,
+                source_language=source_language,
+                target_language=target_language,
+                glossary=glossary,
+            )
+            if current_batch and len(candidate_prompt) > self.max_prompt_chars:
+                batches.append(current_batch)
+                current_batch = [text]
+            else:
+                current_batch = candidate_batch
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
+
+    def _split_pending_groups_into_prompt_batches(
+        self,
+        pending_groups: list[tuple[str, list[tuple[int, TranslationEntry]], Any]],
+    ) -> list[list[tuple[str, list[tuple[int, TranslationEntry]], Any]]]:
+        if not pending_groups:
+            return []
+
+        batches: list[list[tuple[str, list[tuple[int, TranslationEntry]], Any]]] = []
+        current_batch: list[tuple[str, list[tuple[int, TranslationEntry]], Any]] = []
+        for group in pending_groups:
+            candidate_batch = [*current_batch, group]
+            candidate_prompt = self._build_prompt(
+                [entry.protected for _, _, entry in candidate_batch],
+                source_language="English",
+                target_language=self.target_language,
+            )
+            if current_batch and len(candidate_prompt) > self.max_prompt_chars:
+                batches.append(current_batch)
+                current_batch = [group]
+            else:
+                current_batch = candidate_batch
+
+        if current_batch:
+            batches.append(current_batch)
+
+        return batches
 
     def _translate_batch(
         self,
@@ -225,8 +337,11 @@ class OpenAITranslator:
                 glossary=glossary,
             )
             self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
+            response_text: str | None = None
             try:
                 response_text = self._call_openai(prompt)
+                self._last_prompt_for_count_error = prompt
+                self._last_response_for_count_error = response_text
                 translations = self._parse_response(response_text, expected_count=len(texts))
                 self._log_batch_success(texts, batch_number=batch_number, total_batches=total_batches)
                 return translations
@@ -234,10 +349,20 @@ class OpenAITranslator:
                 self._log_openai_exception(exc, batch_number=batch_number, total_batches=total_batches)
                 raise
             except OpenAITranslatorCountError as exc:
+                expected_count, received_count = self._extract_translation_counts(exc)
+                prompt_path, response_path = self._persist_failed_count_debug_artifacts(
+                    prompt=prompt,
+                    response_text=response_text or "",
+                )
                 self.logger.warning(
                     "translation count mismatch for final batch",
                     extra={
+                        "expected_translation_count": expected_count,
+                        "received_translation_count": received_count,
                         "batch_number": batch_number,
+                        "prompt_length": len(prompt),
+                        "prompt_path": str(prompt_path),
+                        "response_path": str(response_path),
                         "total_batches": total_batches,
                         "batch_size": len(texts),
                         "error": str(exc),
@@ -259,9 +384,12 @@ class OpenAITranslator:
         self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
 
         for attempt in range(1, self.max_retries + 1):
+            response_text: str | None = None
             try:
                 started_at = time.perf_counter()
                 response_text = self._call_openai(prompt)
+                self._last_prompt_for_count_error = prompt
+                self._last_response_for_count_error = response_text
                 duration = time.perf_counter() - started_at
                 translations = self._parse_response(response_text, expected_count=len(texts))
                 self.logger.info(
@@ -277,13 +405,23 @@ class OpenAITranslator:
                 )
                 return translations
             except OpenAITranslatorCountError as exc:
+                expected_count, received_count = self._extract_translation_counts(exc)
+                prompt_path, response_path = self._persist_failed_count_debug_artifacts(
+                    prompt=prompt,
+                    response_text=response_text or "",
+                )
                 if attempt >= self.max_retries:
                     raise
                 delay = self.retry_delay * (self.retry_backoff_factor ** (attempt - 1))
                 self.logger.warning(
                     "translation count mismatch; retrying",
                     extra={
+                        "expected_translation_count": expected_count,
+                        "received_translation_count": received_count,
                         "batch_number": batch_number,
+                        "prompt_length": len(prompt),
+                        "prompt_path": str(prompt_path),
+                        "response_path": str(response_path),
                         "total_batches": total_batches,
                         "batch_size": len(texts),
                         "attempt": attempt,
@@ -348,35 +486,73 @@ class OpenAITranslator:
         if self.timeout is not None:
             kwargs["timeout"] = self.timeout
 
-        print("===== OPENAI REQUEST =====")
-        print(f"model={self.model}")
-        print(f"prompt_size_bytes={len(prompt.encode('utf-8'))}")
-        print(f"prompt_size_chars={len(prompt)}")
-        print(f"batch_text_count={len(prompt.splitlines())}")
-        print(f"timeout={kwargs.get('timeout')}")
+        batch_size = len([line for line in prompt.splitlines() if line[:1].isdigit()])
+        prompt_size = len(prompt.encode("utf-8"))
         started_at = time.perf_counter()
         try:
             response = self.client.responses.create(**kwargs)
         except Exception as exc:  # pragma: no cover - defensive guard
             elapsed = time.perf_counter() - started_at
-            print("===== RESPONSE RECEIVED =====")
-            print(f"elapsed_seconds={elapsed:.6f}")
-            print(f"exception_class={exc.__class__.__name__}")
-            status_code = None
-            if hasattr(exc, "status_code"):
-                status_code = getattr(exc, "status_code")
-            elif hasattr(exc, "response") and getattr(exc, "response", None) is not None:
-                status_code = getattr(exc.response, "status_code", None)
-            print(f"status_code={status_code}")
-            print(f"exception_message={exc}")
+            self._report_progress(
+                prompt=prompt,
+                elapsed_seconds=elapsed,
+                batch_size=batch_size,
+                prompt_size=prompt_size,
+                failed=True,
+                exception=exc,
+            )
             raise
 
         elapsed = time.perf_counter() - started_at
-        print("===== RESPONSE RECEIVED =====")
-        print(f"elapsed_seconds={elapsed:.6f}")
         output_text = getattr(response, "output_text", "")
-        print(f"output_text_length={len(output_text)}")
+        self._report_progress(
+            prompt=prompt,
+            elapsed_seconds=elapsed,
+            batch_size=batch_size,
+            prompt_size=prompt_size,
+            failed=False,
+            output_text=output_text,
+        )
         return output_text
+
+    def _report_progress(
+        self,
+        *,
+        prompt: str,
+        elapsed_seconds: float,
+        batch_size: int,
+        prompt_size: int,
+        failed: bool,
+        exception: Exception | None = None,
+        output_text: str | None = None,
+    ) -> None:
+        reporter = getattr(self, "_progress_reporter", None)
+        if reporter is None:
+            return
+
+        context = self._progress_context or {}
+        batch_number = int(context.get("current_batch", 0))
+        total_batches = int(context.get("total_batches", 0))
+        translated_count = int(context.get("translated_count", 0))
+        total_texts = int(context.get("total_texts", 0))
+        current_file = context.get("current_file")
+        if not failed:
+            translated_count += batch_size
+            self._progress_context = {
+                **context,
+                "translated_count": translated_count,
+            }
+        reporter.on_request_completed(
+            batch_number=batch_number,
+            total_batches=total_batches,
+            batch_size=batch_size,
+            prompt_size=prompt_size,
+            elapsed_seconds=elapsed_seconds,
+            current_file=current_file,
+            translated_count=translated_count,
+            total_texts=total_texts,
+            failed=failed,
+        )
 
     def _log_batch_start(self, texts: list[str], *, batch_number: int, total_batches: int, prompt: str) -> None:
         self.logger.info(
@@ -419,6 +595,43 @@ class OpenAITranslator:
                 "error_message": message,
             },
         )
+
+    def _extract_translation_counts(self, exc: OpenAITranslatorCountError) -> tuple[int | None, int | None]:
+        match = re.search(r"Expected (\d+) translations but received (\d+)", str(exc))
+        if not match:
+            return None, None
+        return int(match.group(1)), int(match.group(2))
+
+    def _get_debug_artifact_paths(self) -> tuple[Path, Path]:
+        project_root = Path(__file__).resolve().parents[2]
+        debug_dir = project_root / "debug"
+        return debug_dir / "failed_prompt.txt", debug_dir / "failed_response.txt"
+
+    def _persist_failed_count_debug_artifacts(self, *, prompt: str, response_text: str) -> tuple[Path, Path]:
+        prompt_path, response_path = self._get_debug_artifact_paths()
+        try:
+            prompt_path.parent.mkdir(parents=True, exist_ok=True)
+            prompt_path.write_text(prompt, encoding="utf-8")
+            response_path.write_text(response_text, encoding="utf-8")
+            self.logger.info(
+                "saved OpenAI count mismatch debug artifacts",
+                extra={
+                    "prompt_path": str(prompt_path.resolve()),
+                    "response_path": str(response_path.resolve()),
+                    "prompt_length": len(prompt),
+                    "response_length": len(response_text),
+                },
+            )
+        except OSError as exc:
+            self.logger.warning(
+                "failed to persist OpenAI count mismatch debug artifacts",
+                extra={
+                    "prompt_path": str(prompt_path.resolve()),
+                    "response_path": str(response_path.resolve()),
+                    "error": str(exc),
+                },
+            )
+        return prompt_path.resolve(), response_path.resolve()
 
     def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
         """Restore protected markers into translated text while preserving surrounding content."""
