@@ -248,7 +248,44 @@ class OpenAITranslator:
             translated_protected_texts,
             strict=True,
         ):
-            restored_source = self._restore_protected_text(protected_text, translated_protected_text)
+            entry_index, entry = matching_entries[0]
+            try:
+                restored_source = self._restore_protected_text(protected_text, translated_protected_text)
+            except ValueError as exc:
+                if str(exc) != "Duplicate placeholders detected in protected text":
+                    raise
+
+                translated_attempt = self._inject_translation_into_masked_text(
+                    protected_text.protected,
+                    translated_protected_text,
+                )
+                original_placeholders = list(protected_text.placeholders.keys())
+                translated_placeholders = self._extract_placeholders_from_text(translated_attempt)
+                debug_dir = self._persist_restore_duplicate_debug_artifacts(
+                    original_source=protected_text.original,
+                    protected_source=protected_text.protected,
+                    translated_protected=translated_protected_text,
+                    placeholders_before_restore=original_placeholders,
+                    placeholders_after_translation=translated_placeholders,
+                    file_name=entry.file.name,
+                    field_name=entry.field,
+                    json_path=entry.path,
+                    restored_attempt=translated_attempt,
+                )
+                self.logger.error(
+                    "duplicate placeholders detected during restore",
+                    extra={
+                        "entry_id": entry_index + 1,
+                        "field": entry.field,
+                        "file": str(entry.file),
+                        "json_path": self._render_json_path(entry.path),
+                        "original_placeholders": original_placeholders,
+                        "translated_placeholders": translated_placeholders,
+                        "debug_dir": str(debug_dir),
+                    },
+                )
+                raise
+
             if self.cache is not None and hasattr(self.cache, "put"):
                 self.cache.put(source, restored_source)
                 if hasattr(self.cache, "save"):
@@ -603,6 +640,11 @@ class OpenAITranslator:
         debug_dir = project_root / "debug"
         return debug_dir / "failed_prompt.txt", debug_dir / "failed_response.txt"
 
+    def _get_restore_debug_artifact_dir(self) -> Path:
+        project_root = Path(__file__).resolve().parents[2]
+        debug_dir = project_root / "debug"
+        return debug_dir / f"restore_duplicate_placeholders_{time.time_ns()}"
+
     def _persist_failed_count_debug_artifacts(self, *, prompt: str, response_text: str) -> tuple[Path, Path]:
         prompt_path, response_path = self._get_debug_artifact_paths()
         try:
@@ -628,6 +670,68 @@ class OpenAITranslator:
                 },
             )
         return prompt_path.resolve(), response_path.resolve()
+
+    def _persist_restore_duplicate_debug_artifacts(
+        self,
+        *,
+        original_source: str,
+        protected_source: str,
+        translated_protected: str,
+        placeholders_before_restore: list[str],
+        placeholders_after_translation: list[str],
+        file_name: str,
+        field_name: str,
+        json_path: list[str | int],
+        restored_attempt: str | None,
+    ) -> Path:
+        debug_dir = self._get_restore_debug_artifact_dir()
+        try:
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            (debug_dir / "original_source.txt").write_text(original_source, encoding="utf-8")
+            (debug_dir / "protected_source.txt").write_text(protected_source, encoding="utf-8")
+            (debug_dir / "translated_protected.txt").write_text(translated_protected, encoding="utf-8")
+            (debug_dir / "placeholders_before_restore.json").write_text(
+                json.dumps(placeholders_before_restore, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (debug_dir / "placeholders_after_translation.json").write_text(
+                json.dumps(placeholders_after_translation, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            (debug_dir / "file_name.txt").write_text(file_name, encoding="utf-8")
+            (debug_dir / "field_name.txt").write_text(field_name, encoding="utf-8")
+            (debug_dir / "json_path.txt").write_text(self._render_json_path(json_path), encoding="utf-8")
+            if restored_attempt is not None:
+                (debug_dir / "restored_attempt.txt").write_text(restored_attempt, encoding="utf-8")
+            self.logger.info(
+                "saved restore duplicate placeholder debug artifacts",
+                extra={
+                    "debug_dir": str(debug_dir.resolve()),
+                },
+            )
+        except OSError as exc:
+            self.logger.warning(
+                "failed to persist restore duplicate placeholder debug artifacts",
+                extra={
+                    "error": str(exc),
+                    "debug_dir": str(debug_dir.resolve()),
+                },
+            )
+        return debug_dir.resolve()
+
+    def _render_json_path(self, path_parts: list[str | int]) -> str:
+        result = "$"
+        for part in path_parts:
+            if isinstance(part, int):
+                result += f"[{part}]"
+            else:
+                escaped = str(part).replace("'", "\\'")
+                result += f"['{escaped}']"
+        return result
+
+    def _extract_placeholders_from_text(self, text: str) -> list[str]:
+        placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
+        return [match.group(0) for match in placeholder_pattern.finditer(text)]
 
     def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
         """Restore protected markers into translated text while preserving surrounding content."""

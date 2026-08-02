@@ -169,3 +169,88 @@ def test_invalid_json_persists_full_prompt_and_response_and_logs_parse_error(
     assert any(record.getMessage() == "translation response parse/validation failed" for record in caplog.records)
     assert any(getattr(record, "prompt_path", None) == str(prompt_path.resolve()) for record in caplog.records)
     assert any(getattr(record, "response_path", None) == str(response_path.resolve()) for record in caplog.records)
+
+
+def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = Mock()
+    client.responses.create.return_value = SimpleNamespace(
+        output_text=json.dumps(
+            {
+                "translations": [
+                    {
+                        "id": 1,
+                        "translation": "Bonjour __FT_HTML_00001__ __FT_HTML_00001__",
+                    }
+                ]
+            }
+        )
+    )
+
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=1,
+        client=client,
+    )
+
+    debug_dir = tmp_path / "debug" / "restore_duplicate_placeholders_test"
+
+    monkeypatch.setattr(
+        translator,
+        "_get_restore_debug_artifact_dir",
+        lambda: debug_dir,
+    )
+    caplog.set_level("INFO")
+
+    entries = [
+        TranslationEntry(
+            file=Path("sample.json"),
+            path=["description"],
+            field="description",
+            source="<p>Hello</p>",
+        )
+    ]
+
+    with pytest.raises(ValueError, match="Duplicate placeholders detected in protected text"):
+        translator.translate(entries)
+
+    assert (debug_dir / "original_source.txt").read_text(encoding="utf-8") == "<p>Hello</p>"
+    assert "__FT_HTML_00001__" in (debug_dir / "protected_source.txt").read_text(encoding="utf-8")
+    assert (
+        (debug_dir / "translated_protected.txt").read_text(encoding="utf-8")
+        == "Bonjour __FT_HTML_00001__ __FT_HTML_00001__"
+    )
+    assert "__FT_HTML_00001__" in (debug_dir / "restored_attempt.txt").read_text(encoding="utf-8")
+    placeholders_before = json.loads((debug_dir / "placeholders_before_restore.json").read_text(encoding="utf-8"))
+    placeholders_after = json.loads((debug_dir / "placeholders_after_translation.json").read_text(encoding="utf-8"))
+    assert "__FT_HTML_00001__" in placeholders_before
+    assert "__FT_HTML_00002__" in placeholders_before
+    assert placeholders_after.count("__FT_HTML_00001__") >= 2
+    assert "__FT_HTML_00002__" in placeholders_after
+    assert (debug_dir / "file_name.txt").read_text(encoding="utf-8") == "sample.json"
+    assert (debug_dir / "field_name.txt").read_text(encoding="utf-8") == "description"
+    assert (debug_dir / "json_path.txt").read_text(encoding="utf-8") == "$['description']"
+
+    assert any(record.getMessage() == "saved restore duplicate placeholder debug artifacts" for record in caplog.records)
+    duplicate_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "duplicate placeholders detected during restore"
+    ]
+    assert duplicate_logs
+    log_record = duplicate_logs[0]
+    assert getattr(log_record, "entry_id", None) == 1
+    assert getattr(log_record, "field", None) == "description"
+    assert getattr(log_record, "file", None) == "sample.json"
+    original_placeholders = getattr(log_record, "original_placeholders", None)
+    translated_placeholders = getattr(log_record, "translated_placeholders", None)
+    assert isinstance(original_placeholders, list)
+    assert isinstance(translated_placeholders, list)
+    assert "__FT_HTML_00001__" in original_placeholders
+    assert translated_placeholders.count("__FT_HTML_00001__") >= 2
+    assert getattr(log_record, "json_path", None) == "$['description']"
