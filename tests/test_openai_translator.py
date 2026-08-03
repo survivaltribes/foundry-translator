@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -10,6 +11,13 @@ import pytest
 from foundry_translator.openai_translator import OpenAITranslatorCountError
 from foundry_translator.openai_translator import OpenAITranslator
 from foundry_translator.scanner import TranslationEntry
+
+
+def _build_placeholder_rich_source() -> str:
+    return (
+        '<p>Hello @Embed[foo] and @Check[skill] and @Damage[1d6] and @Template[spell] '
+        'and [[link]] and {{macro}} and @UUID[123e4567-e89b-12d3-a456-426614174000]</p>'
+    )
 
 
 def test_openai_translator_preserves_order_and_count() -> None:
@@ -183,7 +191,7 @@ def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
                 "translations": [
                     {
                         "id": 1,
-                        "translation": "Bonjour __FT_HTML_00001__ __FT_HTML_00001__",
+                        "translation": "Bonjour __FT_FAKE_99999__ __FT_FAKE_99999__",
                     }
                 ]
             }
@@ -223,15 +231,14 @@ def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
     assert "__FT_HTML_00001__" in (debug_dir / "protected_source.txt").read_text(encoding="utf-8")
     assert (
         (debug_dir / "translated_protected.txt").read_text(encoding="utf-8")
-        == "Bonjour __FT_HTML_00001__ __FT_HTML_00001__"
+        == "Bonjour __FT_FAKE_99999__ __FT_FAKE_99999__"
     )
-    assert "__FT_HTML_00001__" in (debug_dir / "restored_attempt.txt").read_text(encoding="utf-8")
+    assert "__FT_FAKE_99999__" in (debug_dir / "restored_attempt.txt").read_text(encoding="utf-8")
     placeholders_before = json.loads((debug_dir / "placeholders_before_restore.json").read_text(encoding="utf-8"))
     placeholders_after = json.loads((debug_dir / "placeholders_after_translation.json").read_text(encoding="utf-8"))
     assert "__FT_HTML_00001__" in placeholders_before
     assert "__FT_HTML_00002__" in placeholders_before
-    assert placeholders_after.count("__FT_HTML_00001__") >= 2
-    assert "__FT_HTML_00002__" in placeholders_after
+    assert placeholders_after.count("__FT_FAKE_99999__") >= 2
     assert (debug_dir / "file_name.txt").read_text(encoding="utf-8") == "sample.json"
     assert (debug_dir / "field_name.txt").read_text(encoding="utf-8") == "description"
     assert (debug_dir / "json_path.txt").read_text(encoding="utf-8") == "$['description']"
@@ -252,5 +259,244 @@ def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
     assert isinstance(original_placeholders, list)
     assert isinstance(translated_placeholders, list)
     assert "__FT_HTML_00001__" in original_placeholders
-    assert translated_placeholders.count("__FT_HTML_00001__") >= 2
+    assert translated_placeholders.count("__FT_FAKE_99999__") >= 2
     assert getattr(log_record, "json_path", None) == "$['description']"
+
+
+def test_strip_appended_original_protected_source_keeps_normal_translation() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    result = translator._strip_appended_original_protected_source(
+        translated_text="Bonjour",
+        protected_source="__FT_HTML_00001__Hello__FT_HTML_00002__",
+    )
+
+    assert result == "Bonjour"
+
+
+def test_strip_appended_original_protected_source_strips_exact_suffix() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_source = "__FT_HTML_00001__Hello__FT_HTML_00002__"
+    result = translator._strip_appended_original_protected_source(
+        translated_text=f"Bonjour{protected_source}",
+        protected_source=protected_source,
+    )
+
+    assert result == "Bonjour"
+
+
+def test_strip_appended_original_protected_source_strips_suffix_starting_at_placeholder_7() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_text = translator.protector.protect(_build_placeholder_rich_source())
+    placeholder_matches = list(re.finditer(r"__FT_[A-Z_]+_\d{5}__", protected_text.protected))
+    assert len(placeholder_matches) >= 7
+    suffix_start = placeholder_matches[6].start()
+    suffix = protected_text.protected[suffix_start:]
+    masked_translation = protected_text.protected.replace("Hello", "Bonjour")
+
+    result = translator._strip_appended_original_protected_source(
+        translated_text=f"{masked_translation}{suffix}",
+        protected_source=protected_text.protected,
+    )
+
+    assert result == masked_translation
+
+
+def test_strip_appended_original_protected_source_strips_suffix_starting_at_arbitrary_placeholder() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_text = translator.protector.protect(_build_placeholder_rich_source())
+    placeholder_matches = list(re.finditer(r"__FT_[A-Z_]+_\d{5}__", protected_text.protected))
+    suffix_start = placeholder_matches[3].start()
+    suffix = protected_text.protected[suffix_start:]
+    masked_translation = protected_text.protected.replace("Hello", "Bonjour")
+
+    result = translator._strip_appended_original_protected_source(
+        translated_text=f"{masked_translation}{suffix}",
+        protected_source=protected_text.protected,
+    )
+
+    assert result == masked_translation
+
+
+def test_strip_appended_original_protected_source_does_not_strip_partial_overlap() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_source = "__FT_HTML_00001__Hello__FT_HTML_00002__"
+    partial = protected_source[:-1]
+    translated = f"Bonjour{partial}"
+    result = translator._strip_appended_original_protected_source(
+        translated_text=translated,
+        protected_source=protected_source,
+    )
+
+    assert result == translated
+
+
+def test_strip_appended_original_protected_source_does_not_strip_legitimate_repeat_structure() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_text = translator.protector.protect(_build_placeholder_rich_source())
+    translated = (
+        "Bonjour bonjour. "
+        "Le texte se répète, mais chaque placeholder protégé n'apparaît qu'une seule fois: "
+        f"{protected_text.protected} "
+        "Encore bonjour."
+    )
+
+    result = translator._strip_appended_original_protected_source(
+        translated_text=translated,
+        protected_source=protected_text.protected,
+    )
+
+    assert result == translated
+
+
+def test_strip_appended_original_protected_source_truncates_at_first_repeated_placeholder() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_text = translator.protector.protect(_build_placeholder_rich_source())
+    placeholder_matches = list(re.finditer(r"__FT_[A-Z_]+_\d{5}__", protected_text.protected))
+    first_placeholder = placeholder_matches[0].group(0)
+    second_placeholder = placeholder_matches[1].group(0)
+    translated = f"Bonjour {first_placeholder} texte {second_placeholder} suite {first_placeholder} DUP"
+
+    result = translator._strip_appended_original_protected_source(
+        translated_text=translated,
+        protected_source=protected_text.protected,
+    )
+
+    assert result == f"Bonjour {first_placeholder} texte {second_placeholder} suite "
+
+
+def test_translate_strips_appended_protected_source_before_restore() -> None:
+    client = Mock()
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=1,
+        client=client,
+    )
+
+    source = "<p>Hello</p>"
+    protected_source = translator.protector.protect(source).protected
+    client.responses.create.return_value = SimpleNamespace(
+        output_text=json.dumps(
+            {
+                "translations": [
+                    {
+                        "id": 1,
+                        "translation": f"Bonjour{protected_source}",
+                    }
+                ]
+            }
+        )
+    )
+
+    entries = [
+        TranslationEntry(
+            file=Path("sample.json"),
+            path=["description"],
+            field="description",
+            source=source,
+        )
+    ]
+
+    translated = translator.translate(entries)
+
+    assert translated[0].source == "<p>Bonjour</p>"
+
+
+def test_replay_restore_from_debug_dir_replays_saved_diagnostics(tmp_path: Path) -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        client=object(),
+    )
+
+    source = _build_placeholder_rich_source()
+    protected_text = translator.protector.protect(source)
+    placeholder_matches = list(re.finditer(r"__FT_[A-Z_]+_\d{5}__", protected_text.protected))
+    suffix_start = placeholder_matches[6].start()
+    duplicated_suffix = protected_text.protected[suffix_start:]
+    masked_translation = protected_text.protected.replace("Hello", "Bonjour")
+    translated_protected = f"{masked_translation}{duplicated_suffix}"
+
+    debug_dir = tmp_path / "restore_duplicate_placeholders_test"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    (debug_dir / "original_source.txt").write_text(source, encoding="utf-8")
+    (debug_dir / "protected_source.txt").write_text(protected_text.protected, encoding="utf-8")
+    (debug_dir / "translated_protected.txt").write_text(translated_protected, encoding="utf-8")
+    (debug_dir / "placeholders_before_restore.json").write_text(
+        json.dumps(list(protected_text.placeholders.keys()), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (debug_dir / "placeholders_after_translation.json").write_text(
+        json.dumps([match.group(0) for match in placeholder_matches], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (debug_dir / "file_name.txt").write_text("andrella.json", encoding="utf-8")
+    (debug_dir / "field_name.txt").write_text("description", encoding="utf-8")
+    (debug_dir / "json_path.txt").write_text("$['description']", encoding="utf-8")
+    (debug_dir / "restored_attempt.txt").write_text(translated_protected, encoding="utf-8")
+
+    replayed = OpenAITranslator.replay_restore_from_debug_dir(debug_dir)
+    expected = translator._restore_protected_text(protected_text, masked_translation)
+
+    assert replayed == expected
+
+
+def test_restore_protected_text_handles_masked_translation_with_appended_suffix() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        client=object(),
+    )
+
+    source = _build_placeholder_rich_source()
+    protected_text = translator.protector.protect(source)
+    masked_translation = protected_text.protected.replace("Hello", "Bonjour")
+    placeholder_matches = list(re.finditer(r"__FT_[A-Z_]+_\d{5}__", protected_text.protected))
+    suffix_start = placeholder_matches[6].start()
+    duplicated_suffix = protected_text.protected[suffix_start:]
+
+    restored = translator._restore_protected_text(
+        protected_text,
+        f"{masked_translation}{duplicated_suffix}",
+    )
+
+    assert "Bonjour" in restored
+    assert "__FT_" not in restored

@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import time
+from dataclasses import dataclass
 from dataclasses import replace
 from typing import Any
 
@@ -17,6 +18,7 @@ from openai import APIStatusError
 from openai import OpenAI
 
 from .protect import Protect
+from .protect import ProtectedText
 from .scanner import TranslationEntry
 
 
@@ -34,6 +36,22 @@ class OpenAITranslatorTimeoutError(OpenAITranslatorRequestError):
 
 class OpenAITranslatorCountError(OpenAITranslatorError):
     """Raised when the API returns an unexpected number of translations."""
+
+
+@dataclass(slots=True)
+class RestoreReplayArtifacts:
+    """Saved diagnostics used to replay a restore failure."""
+
+    debug_dir: Path
+    original_source: str
+    protected_source: str
+    translated_protected: str
+    placeholders_before_restore: list[str]
+    placeholders_after_translation: list[str]
+    file_name: str
+    field_name: str
+    json_path: str
+    restored_attempt: str | None
 
 
 TRANSLATION_RESPONSE_SCHEMA: dict[str, Any] = {
@@ -635,6 +653,104 @@ class OpenAITranslator:
             return None, None
         return int(match.group(1)), int(match.group(2))
 
+
+    @staticmethod
+    def strip_appended_original_protected_source(translated_text: str, protected_source: str) -> str:
+        """Remove duplicated protected-source suffixes before restore.
+
+        This strips either:
+        - an exact trailing copy of the full protected source, or
+        - a trailing copy that starts at any placeholder boundary, or
+        - text from the first repeated source placeholder onward.
+        """
+
+        if not translated_text or not protected_source:
+            return translated_text
+
+        if translated_text.endswith(protected_source):
+            return translated_text[: -len(protected_source)]
+
+        placeholder_pattern = re.compile(r"__FT_[A-Z_]+_\d{5}__")
+        protected_placeholders = {
+            match.group(0)
+            for match in placeholder_pattern.finditer(protected_source)
+        }
+
+        for match in placeholder_pattern.finditer(protected_source):
+            candidate_suffix = protected_source[match.start() :]
+            if translated_text.endswith(candidate_suffix):
+                suffix_start = len(translated_text) - len(candidate_suffix)
+                first_suffix_placeholder = match.group(0)
+                has_prior_same_placeholder = any(
+                    m.group(0) == first_suffix_placeholder and m.start() < suffix_start
+                    for m in placeholder_pattern.finditer(translated_text)
+                )
+                if has_prior_same_placeholder:
+                    return translated_text[: -len(candidate_suffix)]
+
+        seen_placeholders: set[str] = set()
+        for match in placeholder_pattern.finditer(translated_text):
+            placeholder = match.group(0)
+            if placeholder not in protected_placeholders:
+                continue
+            if placeholder in seen_placeholders:
+                return translated_text[: match.start()]
+            seen_placeholders.add(placeholder)
+
+        return translated_text
+
+
+    @staticmethod
+    def load_restore_replay_artifacts(debug_dir: Path | str) -> RestoreReplayArtifacts:
+        """Load restore-failure diagnostics from a debug directory."""
+
+        debug_path = Path(debug_dir).expanduser().resolve()
+
+        def read_text(name: str) -> str:
+            return (debug_path / name).read_text(encoding="utf-8")
+
+        def read_json_list(name: str) -> list[str]:
+            payload = json.loads(read_text(name))
+            if not isinstance(payload, list):
+                raise ValueError(f"Expected {name} to contain a JSON array")
+            return [str(item) for item in payload]
+
+        restored_attempt_path = debug_path / "restored_attempt.txt"
+        restored_attempt = restored_attempt_path.read_text(encoding="utf-8") if restored_attempt_path.exists() else None
+
+        return RestoreReplayArtifacts(
+            debug_dir=debug_path,
+            original_source=read_text("original_source.txt"),
+            protected_source=read_text("protected_source.txt"),
+            translated_protected=read_text("translated_protected.txt"),
+            placeholders_before_restore=read_json_list("placeholders_before_restore.json"),
+            placeholders_after_translation=read_json_list("placeholders_after_translation.json"),
+            file_name=read_text("file_name.txt"),
+            field_name=read_text("field_name.txt"),
+            json_path=read_text("json_path.txt"),
+            restored_attempt=restored_attempt,
+        )
+
+
+    @staticmethod
+    def replay_restore_from_debug_dir(debug_dir: Path | str) -> str:
+        """Replay a restore failure from saved diagnostics without making an OpenAI call."""
+
+        artifacts = OpenAITranslator.load_restore_replay_artifacts(debug_dir)
+        translator = OpenAITranslator(
+            api_key="debug-key",
+            model="gpt-4.1-mini",
+            target_language="French",
+            batch_size=1,
+            client=object(),
+        )
+        protected_text = ProtectedText(
+            original=artifacts.original_source,
+            protected=artifacts.protected_source,
+            placeholders=translator.protector.protect(artifacts.original_source).placeholders,
+        )
+        return translator._restore_protected_text(protected_text, artifacts.translated_protected)
+
     def _get_debug_artifact_paths(self) -> tuple[Path, Path]:
         project_root = Path(__file__).resolve().parents[2]
         debug_dir = project_root / "debug"
@@ -736,16 +852,31 @@ class OpenAITranslator:
     def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
         """Restore protected markers into translated text while preserving surrounding content."""
 
-        if not translated_text:
-            return translated_text
+        sanitized_translated_text = self._strip_appended_original_protected_source(
+            translated_text=translated_text,
+            protected_source=protected_text.protected,
+        )
+
+        if not sanitized_translated_text:
+            return sanitized_translated_text
 
         placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
         matches = list(placeholder_pattern.finditer(protected_text.protected))
         if not matches:
-            return translated_text
+            return sanitized_translated_text
 
-        translated_masked_text = self._inject_translation_into_masked_text(protected_text.protected, translated_text)
+        translated_placeholders = self._extract_placeholders_from_text(sanitized_translated_text)
+        if translated_placeholders:
+            return self.protector.restore(protected_text, sanitized_translated_text)
+
+        translated_masked_text = self._inject_translation_into_masked_text(
+            protected_text.protected,
+            sanitized_translated_text,
+        )
         return self.protector.restore(protected_text, translated_masked_text)
+
+    def _strip_appended_original_protected_source(self, *, translated_text: str, protected_source: str) -> str:
+        return self.__class__.strip_appended_original_protected_source(translated_text, protected_source)
 
     def _inject_translation_into_masked_text(self, masked_text: str, translated_text: str) -> str:
         placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))

@@ -114,15 +114,41 @@ class Pipeline:
         if self.cache is not None and hasattr(self.translator, "cache"):
             self.translator.cache = self.cache
 
-    def run(self, input_dir: Path | str, output_dir: Path | str) -> PipelineResult:
+    def run(
+        self,
+        input_dir: Path | str,
+        output_dir: Path | str,
+        *,
+        only_file: str | None = None,
+        limit: int | None = None,
+    ) -> PipelineResult:
         input_path = Path(input_dir).expanduser().resolve()
         output_path = Path(output_dir).expanduser().resolve()
+
+        return self.run_filtered(input_path, output_path, only_file=only_file, limit=limit)
+
+    def run_filtered(
+        self,
+        input_path: Path,
+        output_path: Path,
+        *,
+        only_file: str | None = None,
+        limit: int | None = None,
+    ) -> PipelineResult:
+        if limit is not None and limit < 0:
+            raise ValueError("limit must be non-negative")
 
         started_at = perf_counter()
         output_path.mkdir(parents=True, exist_ok=True)
 
         scanner = Scanner(input_path)
         documents, entries, issues = scanner.scan()
+
+        if only_file is not None:
+            documents, entries = self._filter_single_document(input_path, documents, entries, only_file)
+
+        if limit is not None:
+            entries = entries[:limit]
 
         reporter = TranslationProgressReporter(
             total_texts=len(entries),
@@ -165,3 +191,29 @@ class Pipeline:
         )
         print(reporter.summary(), flush=True)
         return result
+
+    def _filter_single_document(
+        self,
+        input_path: Path,
+        documents: list[Any],
+        entries: list[Any],
+        only_file: str,
+    ) -> tuple[list[Any], list[Any]]:
+        selected_documents = [document for document in documents if self._document_matches_only_file(input_path, document.path, only_file)]
+        if not selected_documents:
+            raise FileNotFoundError(f"No document matched only-file: {only_file}")
+
+        selected_document_paths = {document.path for document in selected_documents}
+        selected_entries = [entry for entry in entries if entry.file in selected_document_paths]
+        return selected_documents, selected_entries
+
+    def _document_matches_only_file(self, input_path: Path, document_path: Path, only_file: str) -> bool:
+        if document_path.name == only_file:
+            return True
+
+        try:
+            relative_path = document_path.relative_to(input_path)
+        except ValueError:
+            return False
+
+        return relative_path.as_posix() == only_file or relative_path.name == only_file

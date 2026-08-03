@@ -23,6 +23,20 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Translate a source directory")
     run_parser.add_argument("--input", required=True, help="Directory containing the source JSON files")
     run_parser.add_argument("--output", required=True, help="Directory where translated files will be written")
+    run_parser.add_argument("--only-file", help="Process only one source document")
+    run_parser.add_argument("--limit", type=int, help="Stop after N translation entries")
+
+    replay_parser = subparsers.add_parser(
+        "replay-restore",
+        help="Replay a restore failure from a saved debug directory",
+    )
+    replay_parser.add_argument(
+        "--debug-dir",
+        "--resume-from-debug",
+        dest="debug_dir",
+        required=True,
+        help="Directory containing restore diagnostics",
+    )
 
     validate_parser = subparsers.add_parser("validate", help="Validate translated files in a directory")
     validate_parser.add_argument("output_directory", help="Directory containing generated translated JSON files")
@@ -61,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate":
         return validate_output_dir(Path(args.output_directory).expanduser().resolve())
 
+    if args.command == "replay-restore":
+        restored_text = OpenAITranslator.replay_restore_from_debug_dir(Path(args.debug_dir).expanduser().resolve())
+        print(restored_text)
+        return 0
+
     input_dir = Path(args.input).expanduser().resolve()
     output_dir = Path(args.output).expanduser().resolve()
 
@@ -69,7 +88,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     pipeline = Pipeline(translator=build_translator())
-    result = pipeline.run(input_dir, output_dir)
+    result = pipeline.run(
+        input_dir,
+        output_dir,
+        only_file=args.only_file,
+        limit=args.limit,
+    )
 
     logger.info("Files analyzed: %s", result.scanned_files)
     logger.info("Texts translated: %s", result.translated_entries)
