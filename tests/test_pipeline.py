@@ -2,9 +2,32 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from dataclasses import replace
 
 from foundry_translator.pipeline import Pipeline, TranslationProgressReporter
 from foundry_translator.translator import DummyTranslator
+from foundry_translator.translator import Translator
+from foundry_translator.scanner import TranslationEntry
+
+
+class ResumableTestTranslator(Translator):
+    def __init__(self, *, fail_on_call: int | None = None) -> None:
+        super().__init__()
+        self.batch_size = 1
+        self.fail_on_call = fail_on_call
+        self.call_count = 0
+        self.seen_sources: list[str] = []
+
+    def translate(self, entries: list[TranslationEntry]) -> list[TranslationEntry]:
+        self.call_count += 1
+        if self.fail_on_call is not None and self.call_count == self.fail_on_call:
+            raise RuntimeError("forced interruption")
+
+        translated: list[TranslationEntry] = []
+        for entry in entries:
+            self.seen_sources.append(entry.source)
+            translated.append(replace(entry, source=f"T:{entry.source}"))
+        return translated
 
 
 def test_translation_progress_reporter_emits_batch_and_summary_output(capsys) -> None:
@@ -90,3 +113,150 @@ def test_pipeline_run_limit_truncates_translation_entries(tmp_path: Path) -> Non
 
     assert result.translated_entries == 1
     assert (output_dir / "first.translated.json").exists() or (output_dir / "second.translated.json").exists()
+
+
+def test_pipeline_resume_interrupted_run_persists_progress(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True)
+
+    source_file = input_dir / "compendium.json"
+    source_file.write_text(
+        json.dumps(
+            {
+                "name": "Hero",
+                "description": "Brave",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    translator = ResumableTestTranslator(fail_on_call=2)
+    pipeline = Pipeline(translator=translator)
+
+    try:
+        pipeline.run(input_dir, output_dir, resume=True)
+    except RuntimeError as exc:
+        assert "forced interruption" in str(exc)
+    else:  # pragma: no cover - guard
+        raise AssertionError("Expected forced interruption")
+
+    progress_path = output_dir / "progress.json"
+    assert progress_path.exists()
+    payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload["completed_chunk_indices"] == [0]
+    assert payload["translated_entry_count"] == 1
+    assert payload["total_entry_count"] == 2
+
+
+def test_pipeline_resume_continues_after_interrupted_run(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True)
+
+    source_file = input_dir / "compendium.json"
+    source_file.write_text(
+        json.dumps(
+            {
+                "name": "Hero",
+                "description": "Brave",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    first_translator = ResumableTestTranslator(fail_on_call=2)
+    first_pipeline = Pipeline(translator=first_translator)
+    try:
+        first_pipeline.run(input_dir, output_dir, resume=True)
+    except RuntimeError:
+        pass
+
+    resumed_translator = ResumableTestTranslator()
+    resumed_pipeline = Pipeline(translator=resumed_translator)
+    result = resumed_pipeline.run(input_dir, output_dir, resume=True)
+
+    assert result.translated_entries == 2
+    assert resumed_translator.call_count == 1
+    assert resumed_translator.seen_sources == ["Brave"]
+
+    translated_payload = json.loads((output_dir / "compendium.translated.json").read_text(encoding="utf-8"))
+    assert translated_payload["name"] == "T:Hero"
+    assert translated_payload["description"] == "T:Brave"
+
+
+def test_pipeline_resume_completed_run_has_full_progress(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True)
+
+    source_file = input_dir / "compendium.json"
+    source_file.write_text(
+        json.dumps(
+            {
+                "name": "Hero",
+                "description": "Brave",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    translator = ResumableTestTranslator()
+    pipeline = Pipeline(translator=translator)
+    result = pipeline.run(input_dir, output_dir, resume=True)
+
+    assert result.translated_entries == 2
+    progress_path = output_dir / "progress.json"
+    payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert payload["completed_chunk_indices"] == [0, 1]
+    assert payload["translated_entry_count"] == 2
+    assert payload["total_entry_count"] == 2
+
+
+def test_pipeline_resume_rejects_corrupted_progress_file(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+
+    source_file = input_dir / "compendium.json"
+    source_file.write_text(json.dumps({"name": "Hero"}), encoding="utf-8")
+    (output_dir / "progress.json").write_text("{not-json", encoding="utf-8")
+
+    translator = ResumableTestTranslator()
+    pipeline = Pipeline(translator=translator)
+
+    try:
+        pipeline.run(input_dir, output_dir, resume=True)
+    except ValueError as exc:
+        assert "Corrupted progress file" in str(exc)
+    else:  # pragma: no cover - guard
+        raise AssertionError("Expected corrupted progress error")
+
+
+def test_pipeline_resume_rejects_changed_input_directory(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True)
+
+    source_file = input_dir / "compendium.json"
+    source_file.write_text(json.dumps({"name": "Hero", "description": "Brave"}), encoding="utf-8")
+
+    first_translator = ResumableTestTranslator(fail_on_call=2)
+    first_pipeline = Pipeline(translator=first_translator)
+    try:
+        first_pipeline.run(input_dir, output_dir, resume=True)
+    except RuntimeError:
+        pass
+
+    source_file.write_text(json.dumps({"name": "Hero", "description": "Changed"}), encoding="utf-8")
+
+    resumed_translator = ResumableTestTranslator()
+    resumed_pipeline = Pipeline(translator=resumed_translator)
+
+    try:
+        resumed_pipeline.run(input_dir, output_dir, resume=True)
+    except ValueError as exc:
+        assert "Cannot resume: input files changed" in str(exc)
+    else:  # pragma: no cover - guard
+        raise AssertionError("Expected changed input refusal")

@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from foundry_translator.openai_translator import OpenAITranslatorCountError
+from foundry_translator.openai_translator import PlaceholderMismatchError
 from foundry_translator.openai_translator import OpenAITranslator
 from foundry_translator.scanner import TranslationEntry
 
@@ -179,7 +180,7 @@ def test_invalid_json_persists_full_prompt_and_response_and_logs_parse_error(
     assert any(getattr(record, "response_path", None) == str(response_path.resolve()) for record in caplog.records)
 
 
-def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
+def test_placeholder_mismatch_persists_artifacts_and_logs_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -224,7 +225,7 @@ def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
         )
     ]
 
-    with pytest.raises(ValueError, match="Duplicate placeholders detected in protected text"):
+    with pytest.raises(PlaceholderMismatchError, match="Placeholder mismatch after translation"):
         translator.translate(entries)
 
     assert (debug_dir / "original_source.txt").read_text(encoding="utf-8") == "<p>Hello</p>"
@@ -233,34 +234,206 @@ def test_duplicate_placeholder_restore_persists_artifacts_and_logs_context(
         (debug_dir / "translated_protected.txt").read_text(encoding="utf-8")
         == "Bonjour __FT_FAKE_99999__ __FT_FAKE_99999__"
     )
+    assert (debug_dir / "sanitized_translated.txt").read_text(encoding="utf-8") == "Bonjour __FT_FAKE_99999__ __FT_FAKE_99999__"
+    assert (debug_dir / "exception.txt").read_text(encoding="utf-8").startswith("Placeholder mismatch after translation")
     assert "__FT_FAKE_99999__" in (debug_dir / "restored_attempt.txt").read_text(encoding="utf-8")
     placeholders_before = json.loads((debug_dir / "placeholders_before_restore.json").read_text(encoding="utf-8"))
-    placeholders_after = json.loads((debug_dir / "placeholders_after_translation.json").read_text(encoding="utf-8"))
+    placeholders_after = json.loads((debug_dir / "placeholders_after_restore.json").read_text(encoding="utf-8"))
     assert "__FT_HTML_00001__" in placeholders_before
     assert "__FT_HTML_00002__" in placeholders_before
     assert placeholders_after.count("__FT_FAKE_99999__") >= 2
     assert (debug_dir / "file_name.txt").read_text(encoding="utf-8") == "sample.json"
     assert (debug_dir / "field_name.txt").read_text(encoding="utf-8") == "description"
     assert (debug_dir / "json_path.txt").read_text(encoding="utf-8") == "$['description']"
+    assert client.responses.create.call_count == 2
 
-    assert any(record.getMessage() == "saved restore duplicate placeholder debug artifacts" for record in caplog.records)
-    duplicate_logs = [
+    assert any(record.getMessage() == "saved restore debug artifacts" for record in caplog.records)
+    mismatch_logs = [
         record
         for record in caplog.records
-        if record.getMessage() == "duplicate placeholders detected during restore"
+        if record.getMessage() == "placeholder mismatch persisted after retry"
     ]
-    assert duplicate_logs
-    log_record = duplicate_logs[0]
+    assert mismatch_logs
+    log_record = mismatch_logs[0]
     assert getattr(log_record, "entry_id", None) == 1
     assert getattr(log_record, "field", None) == "description"
     assert getattr(log_record, "file", None) == "sample.json"
-    original_placeholders = getattr(log_record, "original_placeholders", None)
-    translated_placeholders = getattr(log_record, "translated_placeholders", None)
-    assert isinstance(original_placeholders, list)
-    assert isinstance(translated_placeholders, list)
-    assert "__FT_HTML_00001__" in original_placeholders
-    assert translated_placeholders.count("__FT_FAKE_99999__") >= 2
+    missing_placeholders = getattr(log_record, "missing_placeholders", None)
+    unexpected_placeholders = getattr(log_record, "unexpected_placeholders", None)
+    assert isinstance(missing_placeholders, list)
+    assert isinstance(unexpected_placeholders, list)
+    assert "__FT_HTML_00001__" in missing_placeholders
+    assert "__FT_FAKE_99999__" in unexpected_placeholders
     assert getattr(log_record, "json_path", None) == "$['description']"
+
+
+def test_non_duplicate_restore_value_error_persists_replayable_artifacts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    client = Mock()
+    # Provide only one known placeholder so validation raises a mismatch before restore.
+    client.responses.create.return_value = SimpleNamespace(
+        output_text=json.dumps(
+            {
+                "translations": [
+                    {
+                        "id": 1,
+                        "translation": "__FT_HTML_00001__Bonjour",
+                    }
+                ]
+            }
+        )
+    )
+
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=1,
+        client=client,
+    )
+
+    debug_dir = tmp_path / "debug" / "restore_unexpected_placeholders_test"
+    monkeypatch.setattr(
+        translator,
+        "_get_restore_debug_artifact_dir",
+        lambda: debug_dir,
+    )
+
+    entries = [
+        TranslationEntry(
+            file=Path("sample.json"),
+            path=["description"],
+            field="description",
+            source="<p>Hello</p>",
+        )
+    ]
+
+    with pytest.raises(PlaceholderMismatchError, match="Placeholder mismatch after translation"):
+        translator.translate(entries)
+
+    assert (debug_dir / "exception.txt").read_text(encoding="utf-8").startswith("Placeholder mismatch after translation")
+    assert (debug_dir / "original_source.txt").read_text(encoding="utf-8") == "<p>Hello</p>"
+    assert (debug_dir / "translated_protected.txt").read_text(encoding="utf-8") == "__FT_HTML_00001__Bonjour"
+    assert (debug_dir / "sanitized_translated.txt").read_text(encoding="utf-8") == "__FT_HTML_00001__Bonjour"
+    assert (debug_dir / "restored_attempt.txt").read_text(encoding="utf-8") == "__FT_HTML_00001__Bonjour"
+
+    placeholders_before = json.loads((debug_dir / "placeholders_before_restore.json").read_text(encoding="utf-8"))
+    placeholders_after = json.loads((debug_dir / "placeholders_after_restore.json").read_text(encoding="utf-8"))
+    assert "__FT_HTML_00001__" in placeholders_before
+    assert "__FT_HTML_00002__" in placeholders_before
+    assert placeholders_after == ["__FT_HTML_00001__"]
+    assert client.responses.create.call_count == 2
+
+
+def test_placeholder_mismatch_retry_once_then_success() -> None:
+    client = Mock()
+    client.responses.create.side_effect = [
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {
+                            "id": 1,
+                            "translation": "__FT_HTML_00001__Bonjour",
+                        }
+                    ]
+                }
+            )
+        ),
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {
+                            "id": 1,
+                            "translation": "__FT_HTML_00001__Bonjour__FT_HTML_00002__",
+                        }
+                    ]
+                }
+            )
+        ),
+    ]
+
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=1,
+        client=client,
+    )
+
+    entries = [
+        TranslationEntry(
+            file=Path("sample.json"),
+            path=["description"],
+            field="description",
+            source="<p>Hello</p>",
+        )
+    ]
+
+    translated = translator.translate(entries)
+
+    assert translated[0].source == "<p>Bonjour</p>"
+    assert client.responses.create.call_count == 2
+
+
+def test_placeholder_mismatch_retries_only_failing_entries() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=2,
+        client=object(),
+    )
+
+    entries = [
+        TranslationEntry(
+            file=Path("a.json"),
+            path=["description"],
+            field="description",
+            source="<p>One</p>",
+        ),
+        TranslationEntry(
+            file=Path("b.json"),
+            path=["description"],
+            field="description",
+            source="<p>Two</p>",
+        ),
+    ]
+
+    protected_one = translator.protector.protect(entries[0].source).protected
+    protected_two = translator.protector.protect(entries[1].source).protected
+
+    observed_requests: list[list[str]] = []
+
+    def fake_translate_batch(
+        texts: list[str],
+        *,
+        source_language: str,
+        target_language: str,
+        glossary: dict[str, str] | None = None,
+    ) -> list[str]:
+        observed_requests.append(texts)
+        if len(observed_requests) == 1:
+            assert texts == [protected_one, protected_two]
+            return [
+                "__FT_HTML_00001__Un__FT_HTML_00002__",
+                "__FT_HTML_00001__Deux",
+            ]
+        assert len(observed_requests) == 2
+        assert texts == [protected_two]
+        return ["__FT_HTML_00001__Deux__FT_HTML_00002__"]
+
+    translator._translate_batch = fake_translate_batch  # type: ignore[assignment]
+
+    translated = translator.translate(entries)
+
+    assert [item.source for item in translated] == ["<p>Un</p>", "<p>Deux</p>"]
+    assert len(observed_requests) == 2
+    assert observed_requests[0] == [protected_one, protected_two]
+    assert observed_requests[1] == [protected_two]
 
 
 def test_strip_appended_original_protected_source_keeps_normal_translation() -> None:
@@ -292,6 +465,52 @@ def test_strip_appended_original_protected_source_strips_exact_suffix() -> None:
     )
 
     assert result == "Bonjour"
+
+
+def test_sanitize_translated_protected_text_keeps_original_when_strip_would_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    protected_source = "__FT_HTML_00001__Hello__FT_HTML_00002__"
+    caplog.set_level("WARNING")
+
+    sanitized = translator._sanitize_translated_protected_text(
+        translated_text=protected_source,
+        protected_source=protected_source,
+    )
+
+    assert sanitized == protected_source
+    assert any(
+        record.getMessage() == "sanitization would remove entire translated text; keeping original"
+        for record in caplog.records
+    )
+
+
+def test_sanitize_translated_protected_text_rejects_non_duplicated_placeholder_removal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+    )
+
+    monkeypatch.setattr(
+        translator,
+        "_strip_appended_original_protected_source",
+        lambda *, translated_text, protected_source: "Bonjour__FT_HTML_00002__",
+    )
+
+    with pytest.raises(AssertionError, match="non-suffix segment|non-duplicated placeholder"):
+        translator._sanitize_translated_protected_text(
+            translated_text="__FT_HTML_00001__Bonjour__FT_HTML_00002__",
+            protected_source="__FT_HTML_00001__Hello__FT_HTML_00002__",
+        )
 
 
 def test_strip_appended_original_protected_source_strips_suffix_starting_at_placeholder_7() -> None:
@@ -476,6 +695,44 @@ def test_replay_restore_from_debug_dir_replays_saved_diagnostics(tmp_path: Path)
     expected = translator._restore_protected_text(protected_text, masked_translation)
 
     assert replayed == expected
+
+
+def test_replay_restore_from_debug_dir_replays_saved_restore_failure(tmp_path: Path) -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        client=object(),
+    )
+
+    source = "<p>Hello</p>"
+    protected_text = translator.protector.protect(source)
+
+    debug_dir = tmp_path / "restore_failure_test"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    (debug_dir / "exception.txt").write_text(
+        "Missing placeholders: ['__FT_HTML_00002__']",
+        encoding="utf-8",
+    )
+    (debug_dir / "original_source.txt").write_text(source, encoding="utf-8")
+    (debug_dir / "protected_source.txt").write_text(protected_text.protected, encoding="utf-8")
+    (debug_dir / "translated_protected.txt").write_text("__FT_HTML_00001__Bonjour", encoding="utf-8")
+    (debug_dir / "sanitized_translated.txt").write_text("__FT_HTML_00001__Bonjour", encoding="utf-8")
+    (debug_dir / "restored_attempt.txt").write_text("__FT_HTML_00001__Bonjour", encoding="utf-8")
+    (debug_dir / "placeholders_before_restore.json").write_text(
+        json.dumps(list(protected_text.placeholders.keys()), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (debug_dir / "placeholders_after_restore.json").write_text(
+        json.dumps(["__FT_HTML_00001__"], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (debug_dir / "file_name.txt").write_text("sample.json", encoding="utf-8")
+    (debug_dir / "field_name.txt").write_text("description", encoding="utf-8")
+    (debug_dir / "json_path.txt").write_text("$['description']", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Missing placeholders"):
+        OpenAITranslator.replay_restore_from_debug_dir(debug_dir)
 
 
 def test_restore_protected_text_handles_masked_translation_with_appended_suffix() -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import json
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -12,6 +14,69 @@ from .translator import Translator
 from .writer import JsonWriter
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class ResumeProgress:
+    """Serializable resume progress persisted between resumable runs."""
+
+    input_signature: str
+    completed_chunk_indices: list[int]
+    current_document: str
+    translated_entry_count: int
+    total_entry_count: int
+    elapsed_time_seconds: float
+    translated_entries: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "input_signature": self.input_signature,
+            "completed_chunk_indices": self.completed_chunk_indices,
+            "current_document": self.current_document,
+            "translated_entry_count": self.translated_entry_count,
+            "total_entry_count": self.total_entry_count,
+            "elapsed_time_seconds": self.elapsed_time_seconds,
+            "translated_entries": self.translated_entries,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ResumeProgress":
+        required = {
+            "input_signature",
+            "completed_chunk_indices",
+            "current_document",
+            "translated_entry_count",
+            "total_entry_count",
+            "elapsed_time_seconds",
+            "translated_entries",
+        }
+        missing = sorted(required - set(payload))
+        if missing:
+            raise ValueError(f"Corrupted progress file: missing keys {missing}")
+
+        completed = payload["completed_chunk_indices"]
+        translated_entries = payload["translated_entries"]
+        if not isinstance(completed, list) or not all(isinstance(item, int) for item in completed):
+            raise ValueError("Corrupted progress file: completed_chunk_indices must be a list of integers")
+        if not isinstance(translated_entries, list) or not all(isinstance(item, dict) for item in translated_entries):
+            raise ValueError("Corrupted progress file: translated_entries must be a list of objects")
+
+        try:
+            translated_entry_count = int(payload["translated_entry_count"])
+            total_entry_count = int(payload["total_entry_count"])
+            elapsed_time_seconds = float(payload["elapsed_time_seconds"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Corrupted progress file: invalid numeric fields") from exc
+
+        return cls(
+            input_signature=str(payload["input_signature"]),
+            completed_chunk_indices=sorted(set(completed)),
+            current_document=str(payload["current_document"]),
+            translated_entry_count=translated_entry_count,
+            total_entry_count=total_entry_count,
+            elapsed_time_seconds=elapsed_time_seconds,
+            translated_entries=translated_entries,
+        )
 
 
 class TranslationProgressReporter:
@@ -121,11 +186,12 @@ class Pipeline:
         *,
         only_file: str | None = None,
         limit: int | None = None,
+        resume: bool = False,
     ) -> PipelineResult:
         input_path = Path(input_dir).expanduser().resolve()
         output_path = Path(output_dir).expanduser().resolve()
 
-        return self.run_filtered(input_path, output_path, only_file=only_file, limit=limit)
+        return self.run_filtered(input_path, output_path, only_file=only_file, limit=limit, resume=resume)
 
     def run_filtered(
         self,
@@ -134,6 +200,7 @@ class Pipeline:
         *,
         only_file: str | None = None,
         limit: int | None = None,
+        resume: bool = False,
     ) -> PipelineResult:
         if limit is not None and limit < 0:
             raise ValueError("limit must be non-negative")
@@ -157,7 +224,17 @@ class Pipeline:
         )
         reporter.attach(self.translator)
 
-        translated_entries = self.translator.translate(entries)
+        if resume:
+            translated_entries = self._run_resumable_translation(
+                input_path=input_path,
+                output_path=output_path,
+                entries=entries,
+                only_file=only_file,
+                limit=limit,
+                started_at=started_at,
+            )
+        else:
+            translated_entries = self.translator.translate(entries)
 
         for document in documents:
             destination = output_path / document.path.relative_to(input_path)
@@ -191,6 +268,132 @@ class Pipeline:
         )
         print(reporter.summary(), flush=True)
         return result
+
+    def _run_resumable_translation(
+        self,
+        *,
+        input_path: Path,
+        output_path: Path,
+        entries: list[Any],
+        only_file: str | None,
+        limit: int | None,
+        started_at: float,
+    ) -> list[Any]:
+        progress_path = output_path / "progress.json"
+        input_signature = self._build_input_signature(entries=entries, only_file=only_file, limit=limit)
+
+        chunk_size = max(1, int(getattr(self.translator, "batch_size", len(entries) or 1)))
+        entry_chunks = [entries[index : index + chunk_size] for index in range(0, len(entries), chunk_size)]
+
+        progress = self._load_progress(progress_path)
+        if progress is None:
+            progress = ResumeProgress(
+                input_signature=input_signature,
+                completed_chunk_indices=[],
+                current_document="n/a",
+                translated_entry_count=0,
+                total_entry_count=len(entries),
+                elapsed_time_seconds=0.0,
+                translated_entries=[],
+            )
+        else:
+            if progress.input_signature != input_signature:
+                raise ValueError("Cannot resume: input files changed since previous run")
+
+        translated_by_key: dict[tuple[str, tuple[Any, ...], str], Any] = {}
+        for payload in progress.translated_entries:
+            restored = self._entry_from_progress(payload)
+            key = self._entry_key(restored)
+            translated_by_key[key] = restored
+
+        completed_chunks = set(progress.completed_chunk_indices)
+
+        for chunk_index, chunk_entries in enumerate(entry_chunks):
+            if chunk_index in completed_chunks:
+                continue
+
+            translated_chunk_entries = self.translator.translate(chunk_entries)
+            for translated_entry in translated_chunk_entries:
+                translated_by_key[self._entry_key(translated_entry)] = translated_entry
+
+            completed_chunks.add(chunk_index)
+            progress.completed_chunk_indices = sorted(completed_chunks)
+            progress.current_document = str(chunk_entries[0].file) if chunk_entries else "n/a"
+            progress.translated_entry_count = len(translated_by_key)
+            progress.total_entry_count = len(entries)
+            progress.elapsed_time_seconds = perf_counter() - started_at
+            progress.translated_entries = [
+                self._entry_to_progress(translated_by_key[self._entry_key(entry)])
+                for entry in entries
+                if self._entry_key(entry) in translated_by_key
+            ]
+            self._save_progress_atomic(progress_path, progress)
+
+        translated_entries: list[Any] = []
+        for entry in entries:
+            key = self._entry_key(entry)
+            translated = translated_by_key.get(key)
+            if translated is not None:
+                translated_entries.append(translated)
+
+        return translated_entries
+
+    def _build_input_signature(
+        self,
+        *,
+        entries: list[Any],
+        only_file: str | None,
+        limit: int | None,
+    ) -> str:
+        hasher = hashlib.sha256()
+        hasher.update(f"only_file={only_file}|limit={limit}|count={len(entries)}\n".encode("utf-8"))
+        for entry in entries:
+            hasher.update(str(entry.file).encode("utf-8"))
+            hasher.update(b"\n")
+            hasher.update(repr(entry.path).encode("utf-8"))
+            hasher.update(b"\n")
+            hasher.update(entry.field.encode("utf-8"))
+            hasher.update(b"\n")
+            hasher.update(entry.source.encode("utf-8"))
+            hasher.update(b"\n")
+        return hasher.hexdigest()
+
+    def _entry_key(self, entry: Any) -> tuple[str, tuple[Any, ...], str]:
+        return (str(entry.file), tuple(entry.path), entry.field)
+
+    def _entry_to_progress(self, entry: Any) -> dict[str, Any]:
+        return {
+            "file": str(entry.file),
+            "path": entry.path,
+            "field": entry.field,
+            "source": entry.source,
+        }
+
+    def _entry_from_progress(self, payload: dict[str, Any]) -> Any:
+        from .scanner import TranslationEntry
+
+        return TranslationEntry(
+            file=Path(payload["file"]),
+            path=list(payload["path"]),
+            field=str(payload["field"]),
+            source=str(payload["source"]),
+        )
+
+    def _load_progress(self, progress_path: Path) -> ResumeProgress | None:
+        if not progress_path.exists():
+            return None
+        try:
+            payload = json.loads(progress_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Corrupted progress file: {progress_path}") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"Corrupted progress file: {progress_path}")
+        return ResumeProgress.from_dict(payload)
+
+    def _save_progress_atomic(self, progress_path: Path, progress: ResumeProgress) -> None:
+        temp_path = progress_path.with_suffix(progress_path.suffix + ".tmp")
+        temp_path.write_text(json.dumps(progress.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path.replace(progress_path)
 
     def _filter_single_document(
         self,

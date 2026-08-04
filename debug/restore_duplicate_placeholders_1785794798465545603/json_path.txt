@@ -1,0 +1,1 @@
+$['entries']['Cleric (Level 1)']['items']['Spellcasting']['description']

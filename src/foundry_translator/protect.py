@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
 from dataclasses import dataclass
 from typing import Final
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -126,6 +131,22 @@ class Protect:
 
         text_to_restore = protected_text.protected if translated_text is None else translated_text
         placeholders_in_text = self._find_placeholders(text_to_restore)
+
+        placeholder_names = set(protected_text.placeholders)
+        placeholder_names_in_text = set(placeholders_in_text)
+        missing = placeholder_names - placeholder_names_in_text
+        unexpected = placeholder_names_in_text - placeholder_names
+        text_hash = hashlib.sha256(text_to_restore.encode("utf-8")).hexdigest()[:16]
+        logger.info(
+            "restore precheck (protect): len=%s sha256_16=%s expected=%s actual=%s missing=%s unexpected=%s",
+            len(text_to_restore),
+            text_hash,
+            sorted(placeholder_names),
+            sorted(placeholder_names_in_text),
+            sorted(missing),
+            sorted(unexpected),
+        )
+
         if self._has_duplicate_placeholders(placeholders_in_text):
             raise ValueError("Duplicate placeholders detected in protected text")
 
@@ -137,16 +158,15 @@ class Protect:
             if not self._is_valid_placeholder_name(placeholder_name):
                 raise ValueError(f"Malformed placeholder encountered: {placeholder_name}")
 
-        placeholder_names = set(protected_text.placeholders)
-        placeholder_names_in_text = set(placeholders_in_text)
-
-        missing = placeholder_names_in_text - placeholder_names
+        missing = placeholder_names - placeholder_names_in_text
         if missing:
             raise ValueError(f"Missing placeholders: {sorted(missing)}")
 
-        extra = placeholder_names - placeholder_names_in_text
-        if extra:
-            raise ValueError(f"Unexpected placeholders not present in protected text: {sorted(extra)}")
+        unexpected = placeholder_names_in_text - placeholder_names
+        if unexpected:
+            raise ValueError(
+                f"Unexpected placeholders not present in protected text: {sorted(unexpected)}"
+            )
 
         restored = text_to_restore
         for placeholder_name in placeholders_in_text:

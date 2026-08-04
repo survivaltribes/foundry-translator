@@ -25,6 +25,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--output", required=True, help="Directory where translated files will be written")
     run_parser.add_argument("--only-file", help="Process only one source document")
     run_parser.add_argument("--limit", type=int, help="Stop after N translation entries")
+    run_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume an interrupted translation run using output/progress.json",
+    )
 
     replay_parser = subparsers.add_parser(
         "replay-restore",
@@ -93,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir,
         only_file=args.only_file,
         limit=args.limit,
+        resume=args.resume,
     )
 
     logger.info("Files analyzed: %s", result.scanned_files)

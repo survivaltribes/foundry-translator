@@ -35,6 +35,18 @@ def test_build_parser_supports_replay_restore_and_fast_run_options() -> None:
     assert run_args.command == "run"
     assert run_args.only_file == "sample.json"
     assert run_args.limit == 5
+    assert run_args.resume is False
+
+    resumed_run_args = parser.parse_args([
+        "run",
+        "--input",
+        "input",
+        "--output",
+        "output",
+        "--resume",
+    ])
+    assert resumed_run_args.command == "run"
+    assert resumed_run_args.resume is True
 
     replay_args = parser.parse_args([
         "replay-restore",

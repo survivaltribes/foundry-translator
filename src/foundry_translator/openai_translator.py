@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
+from collections import Counter
 from pathlib import Path
 import re
 import time
@@ -38,6 +40,10 @@ class OpenAITranslatorCountError(OpenAITranslatorError):
     """Raised when the API returns an unexpected number of translations."""
 
 
+class PlaceholderMismatchError(OpenAITranslatorError):
+    """Raised when translated placeholders do not match protected placeholders."""
+
+
 @dataclass(slots=True)
 class RestoreReplayArtifacts:
     """Saved diagnostics used to replay a restore failure."""
@@ -46,12 +52,29 @@ class RestoreReplayArtifacts:
     original_source: str
     protected_source: str
     translated_protected: str
+    sanitized_translated: str
+    exception: str | None
     placeholders_before_restore: list[str]
-    placeholders_after_translation: list[str]
+    placeholders_after_restore: list[str]
     file_name: str
     field_name: str
     json_path: str
     restored_attempt: str | None
+
+
+@dataclass(slots=True)
+class PlaceholderMismatchDetails:
+    """Details about a placeholder mismatch detected before restore."""
+
+    chunk_index: int
+    entry_index: int
+    entry: TranslationEntry
+    protected_text: ProtectedText
+    translated_protected_text: str
+    expected_placeholders: list[str]
+    actual_placeholders: list[str]
+    missing_placeholders: list[str]
+    unexpected_placeholders: list[str]
 
 
 TRANSLATION_RESPONSE_SCHEMA: dict[str, Any] = {
@@ -77,6 +100,8 @@ TRANSLATION_RESPONSE_SCHEMA: dict[str, Any] = {
 
 class OpenAITranslator:
     """Translate text batches through the official OpenAI Responses API."""
+
+    _TRACE_PLACEHOLDER_NAME = "__FT_UUID_00006__"
 
     def __init__(
         self,
@@ -258,6 +283,31 @@ class OpenAITranslator:
                 source_language="English",
                 target_language=self.target_language,
             )
+
+            mismatches = self._collect_placeholder_mismatches(chunk, translated_chunk)
+            if mismatches:
+                self.logger.warning(
+                    "placeholder mismatch detected after translation; retrying once",
+                    extra={
+                        "batch_number": batch_number,
+                        "total_batches": len(batches),
+                        "mismatch_count": len(mismatches),
+                        "trace_placeholder": self._TRACE_PLACEHOLDER_NAME,
+                    },
+                )
+                retry_positions = [mismatch.chunk_index for mismatch in mismatches]
+                retry_texts = [chunk[position][2].protected for position in retry_positions]
+                retried_texts = self._translate_batch(
+                    retry_texts,
+                    source_language="English",
+                    target_language=self.target_language,
+                )
+                for position, translated_text in zip(retry_positions, retried_texts, strict=True):
+                    translated_chunk[position] = translated_text
+                mismatches = self._collect_placeholder_mismatches(chunk, translated_chunk)
+                if mismatches:
+                    raise self._raise_placeholder_mismatch_after_retry(mismatches)
+
             translated_protected_texts.extend(translated_chunk)
             self._progress_context["translated_count"] = len(translated_protected_texts)
 
@@ -270,35 +320,38 @@ class OpenAITranslator:
             try:
                 restored_source = self._restore_protected_text(protected_text, translated_protected_text)
             except ValueError as exc:
-                if str(exc) != "Duplicate placeholders detected in protected text":
-                    raise
-
-                translated_attempt = self._inject_translation_into_masked_text(
-                    protected_text.protected,
+                sanitized_translated_text, restored_attempt, _ = self._prepare_restore_attempt(
+                    protected_text,
                     translated_protected_text,
                 )
                 original_placeholders = list(protected_text.placeholders.keys())
-                translated_placeholders = self._extract_placeholders_from_text(translated_attempt)
-                debug_dir = self._persist_restore_duplicate_debug_artifacts(
+                placeholders_after_restore = self._extract_placeholders_from_text(restored_attempt)
+                debug_dir = self._persist_restore_debug_artifacts(
+                    exception_message=str(exc),
                     original_source=protected_text.original,
                     protected_source=protected_text.protected,
                     translated_protected=translated_protected_text,
+                    sanitized_translated=sanitized_translated_text,
                     placeholders_before_restore=original_placeholders,
-                    placeholders_after_translation=translated_placeholders,
+                    placeholders_after_restore=placeholders_after_restore,
                     file_name=entry.file.name,
                     field_name=entry.field,
                     json_path=entry.path,
-                    restored_attempt=translated_attempt,
+                    restored_attempt=restored_attempt,
                 )
+                log_message = "restore failed during protected placeholder restoration"
+                if str(exc) == "Duplicate placeholders detected in protected text":
+                    log_message = "duplicate placeholders detected during restore"
                 self.logger.error(
-                    "duplicate placeholders detected during restore",
+                    log_message,
                     extra={
                         "entry_id": entry_index + 1,
                         "field": entry.field,
                         "file": str(entry.file),
                         "json_path": self._render_json_path(entry.path),
+                        "error": str(exc),
                         "original_placeholders": original_placeholders,
-                        "translated_placeholders": translated_placeholders,
+                        "placeholders_after_restore": placeholders_after_restore,
                         "debug_dir": str(debug_dir),
                     },
                 )
@@ -715,16 +768,37 @@ class OpenAITranslator:
                 raise ValueError(f"Expected {name} to contain a JSON array")
             return [str(item) for item in payload]
 
-        restored_attempt_path = debug_path / "restored_attempt.txt"
-        restored_attempt = restored_attempt_path.read_text(encoding="utf-8") if restored_attempt_path.exists() else None
+        def read_optional_text(name: str) -> str | None:
+            path = debug_path / name
+            if not path.exists():
+                return None
+            return path.read_text(encoding="utf-8")
+
+        def read_json_list_with_fallback(primary_name: str, fallback_name: str | None = None) -> list[str]:
+            primary_path = debug_path / primary_name
+            if primary_path.exists():
+                return read_json_list(primary_name)
+            if fallback_name is not None and (debug_path / fallback_name).exists():
+                return read_json_list(fallback_name)
+            raise FileNotFoundError(f"Missing required debug artifact: {primary_name}")
+
+        translated_protected = read_text("translated_protected.txt")
+        sanitized_translated = read_optional_text("sanitized_translated.txt")
+        restored_attempt = read_optional_text("restored_attempt.txt")
+        exception_text = read_optional_text("exception.txt")
 
         return RestoreReplayArtifacts(
             debug_dir=debug_path,
             original_source=read_text("original_source.txt"),
             protected_source=read_text("protected_source.txt"),
-            translated_protected=read_text("translated_protected.txt"),
+            translated_protected=translated_protected,
+            sanitized_translated=sanitized_translated if sanitized_translated is not None else translated_protected,
+            exception=exception_text,
             placeholders_before_restore=read_json_list("placeholders_before_restore.json"),
-            placeholders_after_translation=read_json_list("placeholders_after_translation.json"),
+            placeholders_after_restore=read_json_list_with_fallback(
+                "placeholders_after_restore.json",
+                "placeholders_after_translation.json",
+            ),
             file_name=read_text("file_name.txt"),
             field_name=read_text("field_name.txt"),
             json_path=read_text("json_path.txt"),
@@ -749,6 +823,8 @@ class OpenAITranslator:
             protected=artifacts.protected_source,
             placeholders=translator.protector.protect(artifacts.original_source).placeholders,
         )
+        if artifacts.exception is not None and artifacts.restored_attempt is not None:
+            return translator.protector.restore(protected_text, artifacts.restored_attempt)
         return translator._restore_protected_text(protected_text, artifacts.translated_protected)
 
     def _get_debug_artifact_paths(self) -> tuple[Path, Path]:
@@ -787,14 +863,16 @@ class OpenAITranslator:
             )
         return prompt_path.resolve(), response_path.resolve()
 
-    def _persist_restore_duplicate_debug_artifacts(
+    def _persist_restore_debug_artifacts(
         self,
         *,
+        exception_message: str,
         original_source: str,
         protected_source: str,
         translated_protected: str,
+        sanitized_translated: str,
         placeholders_before_restore: list[str],
-        placeholders_after_translation: list[str],
+        placeholders_after_restore: list[str],
         file_name: str,
         field_name: str,
         json_path: list[str | int],
@@ -806,12 +884,14 @@ class OpenAITranslator:
             (debug_dir / "original_source.txt").write_text(original_source, encoding="utf-8")
             (debug_dir / "protected_source.txt").write_text(protected_source, encoding="utf-8")
             (debug_dir / "translated_protected.txt").write_text(translated_protected, encoding="utf-8")
+            (debug_dir / "sanitized_translated.txt").write_text(sanitized_translated, encoding="utf-8")
+            (debug_dir / "exception.txt").write_text(exception_message, encoding="utf-8")
             (debug_dir / "placeholders_before_restore.json").write_text(
                 json.dumps(placeholders_before_restore, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            (debug_dir / "placeholders_after_translation.json").write_text(
-                json.dumps(placeholders_after_translation, ensure_ascii=False, indent=2),
+            (debug_dir / "placeholders_after_restore.json").write_text(
+                json.dumps(placeholders_after_restore, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             (debug_dir / "file_name.txt").write_text(file_name, encoding="utf-8")
@@ -820,14 +900,14 @@ class OpenAITranslator:
             if restored_attempt is not None:
                 (debug_dir / "restored_attempt.txt").write_text(restored_attempt, encoding="utf-8")
             self.logger.info(
-                "saved restore duplicate placeholder debug artifacts",
+                "saved restore debug artifacts",
                 extra={
                     "debug_dir": str(debug_dir.resolve()),
                 },
             )
         except OSError as exc:
             self.logger.warning(
-                "failed to persist restore duplicate placeholder debug artifacts",
+                "failed to persist restore debug artifacts",
                 extra={
                     "error": str(exc),
                     "debug_dir": str(debug_dir.resolve()),
@@ -849,31 +929,273 @@ class OpenAITranslator:
         placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
         return [match.group(0) for match in placeholder_pattern.finditer(text)]
 
-    def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
-        """Restore protected markers into translated text while preserving surrounding content."""
+    def _collect_placeholder_mismatches(
+        self,
+        chunk: list[tuple[str, list[tuple[int, TranslationEntry]], Any]],
+        translated_chunk: list[str],
+    ) -> list[PlaceholderMismatchDetails]:
+        mismatches: list[PlaceholderMismatchDetails] = []
+        for chunk_index, ((_source, matching_entries, protected_text), translated_protected_text) in enumerate(
+            zip(chunk, translated_chunk, strict=True)
+        ):
+            expected_placeholders = self._extract_placeholders_from_text(protected_text.protected)
+            actual_placeholders = self._extract_placeholders_from_text(translated_protected_text)
+            missing_placeholders = sorted(set(expected_placeholders) - set(actual_placeholders))
+            unexpected_placeholders = sorted(set(actual_placeholders) - set(expected_placeholders))
+            if not missing_placeholders and not unexpected_placeholders:
+                continue
 
-        sanitized_translated_text = self._strip_appended_original_protected_source(
+            entry_index, entry = matching_entries[0]
+            mismatches.append(
+                PlaceholderMismatchDetails(
+                    chunk_index=chunk_index,
+                    entry_index=entry_index,
+                    entry=entry,
+                    protected_text=protected_text,
+                    translated_protected_text=translated_protected_text,
+                    expected_placeholders=expected_placeholders,
+                    actual_placeholders=actual_placeholders,
+                    missing_placeholders=missing_placeholders,
+                    unexpected_placeholders=unexpected_placeholders,
+                )
+            )
+        return mismatches
+
+    def _raise_placeholder_mismatch_after_retry(self, mismatches: list[PlaceholderMismatchDetails]) -> Exception:
+        debug_dirs: list[str] = []
+        for mismatch in mismatches:
+            exception_message = (
+                "Placeholder mismatch after translation: "
+                f"missing={mismatch.missing_placeholders} "
+                f"unexpected={mismatch.unexpected_placeholders}"
+            )
+            debug_dir = self._persist_restore_debug_artifacts(
+                exception_message=exception_message,
+                original_source=mismatch.protected_text.original,
+                protected_source=mismatch.protected_text.protected,
+                translated_protected=mismatch.translated_protected_text,
+                sanitized_translated=mismatch.translated_protected_text,
+                placeholders_before_restore=mismatch.expected_placeholders,
+                placeholders_after_restore=mismatch.actual_placeholders,
+                file_name=mismatch.entry.file.name,
+                field_name=mismatch.entry.field,
+                json_path=mismatch.entry.path,
+                restored_attempt=mismatch.translated_protected_text,
+            )
+            debug_dirs.append(str(debug_dir))
+            self.logger.error(
+                "placeholder mismatch persisted after retry",
+                extra={
+                    "entry_id": mismatch.entry_index + 1,
+                    "field": mismatch.entry.field,
+                    "file": str(mismatch.entry.file),
+                    "json_path": self._render_json_path(mismatch.entry.path),
+                    "missing_placeholders": mismatch.missing_placeholders,
+                    "unexpected_placeholders": mismatch.unexpected_placeholders,
+                    "debug_dir": str(debug_dir),
+                },
+            )
+
+        first = mismatches[0]
+        return PlaceholderMismatchError(
+            "Placeholder mismatch after translation "
+            f"for {first.entry.file}:{self._render_json_path(first.entry.path)} "
+            f"missing={first.missing_placeholders} unexpected={first.unexpected_placeholders} "
+            f"debug_dirs={debug_dirs}"
+        )
+
+    def _log_placeholder_trace_stage(
+        self,
+        *,
+        stage: str,
+        text: str,
+        placeholder_name: str,
+        expected_index: int | None,
+    ) -> None:
+        """Emit presence and local context for a traced placeholder at a pipeline stage."""
+
+        if expected_index is None:
+            expected_index = -1
+
+        actual_index = text.find(placeholder_name)
+        found = actual_index != -1
+
+        if found:
+            center = actual_index
+            location = actual_index
+        elif expected_index >= 0:
+            center = min(expected_index, max(len(text) - 1, 0))
+            location = expected_index
+        else:
+            center = 0
+            location = -1
+
+        if text:
+            start = max(0, center - 75)
+            end = min(len(text), center + 75)
+            context = text[start:end]
+        else:
+            context = ""
+
+        self.logger.info(
+            "placeholder trace: stage=%s placeholder=%s present=%s location=%s context=%r",
+            stage,
+            placeholder_name,
+            found,
+            location,
+            context,
+        )
+
+    def _sanitize_translated_protected_text(self, *, translated_text: str, protected_source: str) -> str:
+        """Sanitize translated protected text while preserving non-duplicated placeholders."""
+
+        sanitized = self._strip_appended_original_protected_source(
+            translated_text=translated_text,
+            protected_source=protected_source,
+        )
+
+        if translated_text and not sanitized:
+            self.logger.warning(
+                "sanitization would remove entire translated text; keeping original",
+                extra={
+                    "translated_length": len(translated_text),
+                    "protected_length": len(protected_source),
+                },
+            )
+            return translated_text
+
+        original_placeholders = self._extract_placeholders_from_text(translated_text)
+        sanitized_placeholders = self._extract_placeholders_from_text(sanitized)
+        original_counter = Counter(original_placeholders)
+        sanitized_counter = Counter(sanitized_placeholders)
+        removed_counter = original_counter - sanitized_counter
+
+        if removed_counter:
+            assert translated_text.startswith(sanitized), (
+                "Sanitization removed placeholders from a non-suffix segment"
+            )
+
+            removed_tail = translated_text[len(sanitized) :]
+            removed_tail_counter = Counter(self._extract_placeholders_from_text(removed_tail))
+            assert removed_counter == removed_tail_counter, (
+                "Sanitization removed placeholders outside of the stripped suffix"
+            )
+
+            removed_tail_is_protected_suffix = bool(removed_tail) and protected_source.endswith(removed_tail)
+            if not removed_tail_is_protected_suffix:
+                for placeholder_name in removed_counter:
+                    assert sanitized_counter.get(placeholder_name, 0) > 0, (
+                        "Sanitization removed a non-duplicated placeholder"
+                    )
+
+        return sanitized
+
+    def _prepare_restore_attempt(self, protected_text: Any, translated_text: str) -> tuple[str, str, bool]:
+        """Return sanitized and restore-attempt texts plus whether restore should run."""
+
+        sanitized_translated_text = self._sanitize_translated_protected_text(
             translated_text=translated_text,
             protected_source=protected_text.protected,
         )
 
+        expected_index = protected_text.protected.find(self._TRACE_PLACEHOLDER_NAME)
+        self._log_placeholder_trace_stage(
+            stage="after_sanitization",
+            text=sanitized_translated_text,
+            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            expected_index=expected_index,
+        )
+
         if not sanitized_translated_text:
-            return sanitized_translated_text
+            self._log_placeholder_trace_stage(
+                stage="after_inject_translation_into_masked_text",
+                text=sanitized_translated_text,
+                placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+                expected_index=expected_index,
+            )
+            return sanitized_translated_text, sanitized_translated_text, False
 
         placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
         matches = list(placeholder_pattern.finditer(protected_text.protected))
         if not matches:
-            return sanitized_translated_text
+            self._log_placeholder_trace_stage(
+                stage="after_inject_translation_into_masked_text",
+                text=sanitized_translated_text,
+                placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+                expected_index=expected_index,
+            )
+            return sanitized_translated_text, sanitized_translated_text, False
 
         translated_placeholders = self._extract_placeholders_from_text(sanitized_translated_text)
         if translated_placeholders:
-            return self.protector.restore(protected_text, sanitized_translated_text)
+            self._log_placeholder_trace_stage(
+                stage="after_inject_translation_into_masked_text",
+                text=sanitized_translated_text,
+                placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+                expected_index=expected_index,
+            )
+            return sanitized_translated_text, sanitized_translated_text, True
 
         translated_masked_text = self._inject_translation_into_masked_text(
             protected_text.protected,
             sanitized_translated_text,
         )
-        return self.protector.restore(protected_text, translated_masked_text)
+        self._log_placeholder_trace_stage(
+            stage="after_inject_translation_into_masked_text",
+            text=translated_masked_text,
+            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            expected_index=expected_index,
+        )
+        return sanitized_translated_text, translated_masked_text, True
+
+    def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
+        """Restore protected markers into translated text while preserving surrounding content."""
+
+        expected_index = protected_text.protected.find(self._TRACE_PLACEHOLDER_NAME)
+        self._log_placeholder_trace_stage(
+            stage="protected_source",
+            text=protected_text.protected,
+            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            expected_index=expected_index,
+        )
+        self._log_placeholder_trace_stage(
+            stage="translated_protected",
+            text=translated_text,
+            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            expected_index=expected_index,
+        )
+
+        _, restored_attempt, should_restore = self._prepare_restore_attempt(
+            protected_text, translated_text
+        )
+
+        if not should_restore:
+            return restored_attempt
+
+        self._log_placeholder_trace_stage(
+            stage="before_protect_restore",
+            text=restored_attempt,
+            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            expected_index=expected_index,
+        )
+
+        expected = set(protected_text.placeholders)
+        actual = set(self._extract_placeholders_from_text(restored_attempt))
+        missing = expected - actual
+        unexpected = actual - expected
+        restore_input_hash = hashlib.sha256(restored_attempt.encode("utf-8")).hexdigest()[:16]
+
+        self.logger.info(
+            "restore precheck (translator): len=%s sha256_16=%s expected=%s actual=%s missing=%s unexpected=%s",
+            len(restored_attempt),
+            restore_input_hash,
+            sorted(expected),
+            sorted(actual),
+            sorted(missing),
+            sorted(unexpected),
+        )
+
+        return self.protector.restore(protected_text, restored_attempt)
 
     def _strip_appended_original_protected_source(self, *, translated_text: str, protected_source: str) -> str:
         return self.__class__.strip_appended_original_protected_source(translated_text, protected_source)

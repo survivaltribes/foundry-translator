@@ -1,0 +1,1 @@
+Unexpected placeholders not present in protected text: ['__FT_UUID_00006__']
