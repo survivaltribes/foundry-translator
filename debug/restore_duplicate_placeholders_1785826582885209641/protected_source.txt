@@ -1,0 +1,1 @@
+Hello __FT_EMBED_00001__ and __FT_MACRO_00001__

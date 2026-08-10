@@ -287,6 +287,7 @@ class Pipeline:
 
         progress = self._load_progress(progress_path)
         if progress is None:
+            logger.info("resume diagnostics: no progress file found; starting fresh")
             progress = ResumeProgress(
                 input_signature=input_signature,
                 completed_chunk_indices=[],
@@ -297,6 +298,13 @@ class Pipeline:
                 translated_entries=[],
             )
         else:
+            logger.info(
+                "resume diagnostics: loaded progress completed_chunks=%s translated_entries=%s total_entries=%s current_document=%s",
+                sorted(progress.completed_chunk_indices),
+                progress.translated_entry_count,
+                progress.total_entry_count,
+                progress.current_document,
+            )
             if progress.input_signature != input_signature:
                 raise ValueError("Cannot resume: input files changed since previous run")
 
@@ -308,11 +316,36 @@ class Pipeline:
 
         completed_chunks = set(progress.completed_chunk_indices)
 
+        if hasattr(self.translator, "__dict__"):
+            self.translator.__dict__["_resume_diagnostics_active"] = True
+
         for chunk_index, chunk_entries in enumerate(entry_chunks):
             if chunk_index in completed_chunks:
+                logger.info(
+                    "resume diagnostics: chunk=%s source=loaded_state entry_count=%s",
+                    chunk_index,
+                    len(chunk_entries),
+                )
                 continue
 
+            logger.info(
+                "resume diagnostics: transition loaded_state->fresh_translation chunk=%s loaded_entries=%s pending_entries=%s current_document=%s",
+                chunk_index,
+                len(translated_by_key),
+                len(chunk_entries),
+                str(chunk_entries[0].file) if chunk_entries else "n/a",
+            )
+
+            if hasattr(self.translator, "__dict__"):
+                self.translator.__dict__["_resume_diagnostics_chunk_index"] = chunk_index
+                self.translator.__dict__["_resume_diagnostics_loaded_entries"] = len(translated_by_key)
+
             translated_chunk_entries = self.translator.translate(chunk_entries)
+            logger.info(
+                "resume diagnostics: chunk=%s source=fresh_translation produced_entries=%s",
+                chunk_index,
+                len(translated_chunk_entries),
+            )
             for translated_entry in translated_chunk_entries:
                 translated_by_key[self._entry_key(translated_entry)] = translated_entry
 
@@ -335,6 +368,11 @@ class Pipeline:
             translated = translated_by_key.get(key)
             if translated is not None:
                 translated_entries.append(translated)
+
+        if hasattr(self.translator, "__dict__"):
+            self.translator.__dict__.pop("_resume_diagnostics_chunk_index", None)
+            self.translator.__dict__.pop("_resume_diagnostics_loaded_entries", None)
+            self.translator.__dict__.pop("_resume_diagnostics_active", None)
 
         return translated_entries
 
