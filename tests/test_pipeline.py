@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from dataclasses import replace
 
-from foundry_translator.pipeline import Pipeline, TranslationProgressReporter
+from foundry_translator.pipeline import Pipeline, TranslationProgressReporter, format_duration
 from foundry_translator.translator import DummyTranslator
 from foundry_translator.translator import Translator
 from foundry_translator.scanner import TranslationEntry
@@ -47,8 +47,16 @@ def test_translation_progress_reporter_emits_batch_and_summary_output(capsys) ->
     captured = capsys.readouterr()
     assert "batch=1/2" in captured.out
     assert "translated=2/3" in captured.out
-    assert "file=compendium.json" in captured.out
+    assert "elapsed=" in captured.out
+    assert "ETA=" in captured.out
+    assert "finish≈" in captured.out
     assert "Translation summary:" in reporter.summary()
+
+
+def test_format_duration_formats_hours_minutes_and_days() -> None:
+    assert format_duration(581.4) == "9m 41s"
+    assert format_duration(3900) == "1h 5m"
+    assert format_duration(90000) == "1d 1h"
 
 
 def test_pipeline_writes_translated_output(tmp_path: Path) -> None:

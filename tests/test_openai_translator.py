@@ -657,6 +657,28 @@ def test_translate_strips_appended_protected_source_before_restore() -> None:
     assert translated[0].source == "<p>Bonjour</p>"
 
 
+def test_plain_translation_without_placeholders_is_reconstructed_deterministically() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        client=object(),
+    )
+
+    source = "<p>Hello</p>"
+    protected_text = translator.protector.protect(source)
+
+    sanitized, restored_attempt, should_restore = translator._prepare_restore_attempt(
+        protected_text,
+        "Bonjour",
+    )
+
+    assert sanitized == "Bonjour"
+    assert should_restore is True
+    assert restored_attempt == protected_text.protected.replace("Hello", "Bonjour")
+    assert translator._restore_protected_text(protected_text, "Bonjour") == "<p>Bonjour</p>"
+
+
 def test_replay_restore_from_debug_dir_replays_saved_diagnostics(tmp_path: Path) -> None:
     translator = OpenAITranslator(
         api_key="test-key",

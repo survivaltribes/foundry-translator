@@ -4,6 +4,7 @@ import logging
 import json
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -14,6 +15,23 @@ from .translator import Translator
 from .writer import JsonWriter
 
 logger = logging.getLogger(__name__)
+
+
+def format_duration(seconds: float) -> str:
+    """Return a compact human-readable duration string."""
+
+    total_seconds = max(0, int(seconds))
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+
+    if days:
+        return f"{days}d {hours}h" if hours else f"{days}d"
+    if hours:
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    if minutes:
+        return f"{minutes}m {secs}s" if secs else f"{minutes}m"
+    return f"{secs}s"
 
 
 @dataclass(slots=True)
@@ -129,13 +147,19 @@ class TranslationProgressReporter:
             eta_seconds = avg_duration * remaining_batches
         else:
             eta_seconds = 0.0
-        eta_text = f"eta={eta_seconds:>6.1f}s" if remaining_batches else "eta=0.0s"
+        finish_time = self._finish_time(eta_seconds)
+        eta_text = format_duration(eta_seconds) if remaining_batches else "0s"
+        elapsed_text = format_duration(elapsed)
         print(
-            f"batch={batch_number}/{total_batches} translated={translated_count}/{total_texts} "
-            f"{percentage:>5.1f}% file={self.current_file} prompt={prompt_size} chars"
-            f"elapsed={elapsed:>6.1f}s {eta_text}",
+            f"batch={batch_number}/{total_batches} ({percentage:>5.1f}%) "
+            f"translated={translated_count}/{total_texts} "
+            f"elapsed={elapsed_text} ETA={eta_text} finish≈{finish_time}",
             flush=True,
         )
+
+    def _finish_time(self, eta_seconds: float) -> str:
+        finish_dt = datetime.now().astimezone() + timedelta(seconds=max(0.0, eta_seconds))
+        return finish_dt.strftime("%H:%M")
 
     def summary(self) -> str:
         average_batch_size = (sum(self.batch_sizes) / len(self.batch_sizes)) if self.batch_sizes else 0.0
