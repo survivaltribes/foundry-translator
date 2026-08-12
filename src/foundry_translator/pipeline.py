@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import json
 import hashlib
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,6 +33,47 @@ def format_duration(seconds: float) -> str:
     if minutes:
         return f"{minutes}m {secs}s" if secs else f"{minutes}m"
     return f"{secs}s"
+
+
+def format_progress_bar(progress: float, width: int = 20) -> str:
+    """Return a compact single-line progress bar for console output."""
+
+    clamped = max(0.0, min(1.0, progress))
+    filled = int(round(clamped * width))
+    filled = max(0, min(width, filled))
+
+    try:
+        if getattr(sys.stdout, "encoding", None) and "utf" in getattr(sys.stdout, "encoding", "").lower():
+            completed_char = "█"
+            remaining_char = "░"
+        else:
+            completed_char = "#"
+            remaining_char = "-"
+    except Exception:
+        completed_char = "█"
+        remaining_char = "░"
+
+    bar = completed_char * filled + remaining_char * (width - filled)
+    percentage = f"{clamped * 100:.1f}%"
+    return f"[{bar}] {percentage}"
+
+
+def format_translation_speed(translated_count: int, elapsed_seconds: float) -> str:
+    """Return a human-readable translation speed string based on elapsed time."""
+
+    if elapsed_seconds < 1.0:
+        return "Speed: calculating..."
+
+    if translated_count <= 0:
+        return "Speed: 0 texts/min"
+
+    rate_per_minute = translated_count / (elapsed_seconds / 60.0)
+    if rate_per_minute >= 1.0:
+        unit = "text" if rate_per_minute < 2.0 else "texts"
+        return f"Speed: {rate_per_minute:.0f} {unit}/min"
+
+    rate_per_second = translated_count / elapsed_seconds
+    return f"Speed: {rate_per_second:.2f} texts/s"
 
 
 @dataclass(slots=True)
@@ -150,10 +192,11 @@ class TranslationProgressReporter:
         finish_time = self._finish_time(eta_seconds)
         eta_text = format_duration(eta_seconds) if remaining_batches else "0s"
         elapsed_text = format_duration(elapsed)
+        progress_bar = format_progress_bar(percentage / 100.0)
+        speed_text = format_translation_speed(translated_count, elapsed)
         print(
-            f"batch={batch_number}/{total_batches} ({percentage:>5.1f}%) "
-            f"translated={translated_count}/{total_texts} "
-            f"elapsed={elapsed_text} ETA={eta_text} finish≈{finish_time}",
+            f"{progress_bar} | batch {batch_number}/{total_batches} | {translated_count}/{total_texts} "
+            f"| {speed_text} | elapsed {elapsed_text} | ETA {eta_text} | finish {finish_time}",
             flush=True,
         )
 

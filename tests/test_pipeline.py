@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from dataclasses import replace
 
-from foundry_translator.pipeline import Pipeline, TranslationProgressReporter, format_duration
+from foundry_translator.pipeline import (
+    Pipeline,
+    TranslationProgressReporter,
+    format_duration,
+    format_progress_bar,
+    format_translation_speed,
+)
 from foundry_translator.translator import DummyTranslator
 from foundry_translator.translator import Translator
 from foundry_translator.scanner import TranslationEntry
@@ -45,11 +52,11 @@ def test_translation_progress_reporter_emits_batch_and_summary_output(capsys) ->
     )
 
     captured = capsys.readouterr()
-    assert "batch=1/2" in captured.out
-    assert "translated=2/3" in captured.out
-    assert "elapsed=" in captured.out
-    assert "ETA=" in captured.out
-    assert "finish≈" in captured.out
+    assert "batch 1/2" in captured.out
+    assert "2/3" in captured.out
+    assert "elapsed" in captured.out
+    assert "ETA" in captured.out
+    assert "finish" in captured.out
     assert "Translation summary:" in reporter.summary()
 
 
@@ -57,6 +64,34 @@ def test_format_duration_formats_hours_minutes_and_days() -> None:
     assert format_duration(581.4) == "9m 41s"
     assert format_duration(3900) == "1h 5m"
     assert format_duration(90000) == "1d 1h"
+
+
+def test_format_progress_bar_formats_expected_percentages() -> None:
+    assert format_progress_bar(0.0) == "[░░░░░░░░░░░░░░░░░░░░] 0.0%"
+    assert format_progress_bar(0.25) == "[█████░░░░░░░░░░░░░░░] 25.0%"
+    assert format_progress_bar(0.5) == "[██████████░░░░░░░░░░] 50.0%"
+    assert format_progress_bar(1.0) == "[████████████████████] 100.0%"
+
+
+def test_format_progress_bar_respects_width_and_fallback(monkeypatch) -> None:
+    bar = format_progress_bar(0.5, width=8)
+    assert bar.startswith("[") and bar.endswith("] 50.0%")
+    assert len(bar.split("]", 1)[0]) == 9
+
+    class DummyStdout:
+        encoding = "ascii"
+
+    monkeypatch.setattr(sys, "stdout", DummyStdout())
+    assert format_progress_bar(0.5, width=8) == "[####----] 50.0%"
+
+
+def test_format_translation_speed_handles_calculating_and_pluralization() -> None:
+    assert format_translation_speed(0, 0.5) == "Speed: calculating..."
+    assert format_translation_speed(0, 10.0) == "Speed: 0 texts/min"
+    assert format_translation_speed(34, 60.0) == "Speed: 34 texts/min"
+    assert format_translation_speed(1, 60.0) == "Speed: 1 text/min"
+    assert format_translation_speed(1, 120.0) == "Speed: 0.01 texts/s"
+    assert format_translation_speed(3, 200.0) == "Speed: 0.01 texts/s"
 
 
 def test_pipeline_writes_translated_output(tmp_path: Path) -> None:

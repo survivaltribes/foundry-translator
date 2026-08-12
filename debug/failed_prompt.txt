@@ -8,10 +8,714 @@ Inputs JSON:
 [
   {
     "id": 1,
-    "text": "Hello"
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__. __FT_DOUBLE_BRACKET_00002__. Lancez __FT_DOUBLE_BRACKET_00003__ pour déterminer le type de dégâts : __FT_HTML_00002__1__FT_HTML_00003__, Acide; __FT_HTML_00004__2__FT_HTML_00005__, Froid; __FT_HTML_00006__3__FT_HTML_00007__, Feu; __FT_HTML_00008__4__FT_HTML_00009__, Foudre.__FT_HTML_00010__"
   },
   {
     "id": 2,
-    "text": "World"
+    "text": "Commande Sinistre"
+  },
+  {
+    "id": 3,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet de sauvegarde de Sagesse :__FT_HTML_00003__ DD 12, une créature __FT_DOUBLE_BRACKET_00001__ peut voir à 60 pieds.__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006__Échec :__FT_HTML_00007__ La cible est sous la condition &amp;Reference[Charmed apply=false] jusqu'à la fin de son prochain tour. Tant qu'elle est Charmée, la cible a la condition &amp;Reference[Incapacitated apply=false].__FT_HTML_00008__"
+  },
+  {
+    "id": 4,
+    "text": "Commandé"
+  },
+  {
+    "id": 5,
+    "text": "__FT_HTML_00001__La cible a la condition &amp;Reference[charmed apply=false]. Tant qu'elle est Charmée, la cible a la condition &amp;Reference[Incapacitated apply=false].__FT_HTML_00002__"
+  },
+  {
+    "id": 6,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Espion halfelin à louer__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Jacko propose ses services d'espionnage dans des lieux douteux à travers les Terres Frontalières. Pour le bon prix, Jacko traquera, volera, maltraitera ou éliminera n'importe quelle cible — sans poser de questions. Les clients satisfaits répètent son slogan ringard : « Jacko couvre toujours tes arrières. »__FT_HTML_00006__"
+  },
+  {
+    "id": 7,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__ effectue 2 attaques __FT_DOUBLE_BRACKET_00002__. __FT_HTML_00002__"
+  },
+  {
+    "id": 8,
+    "text": "Action rusée"
+  },
+  {
+    "id": 9,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__ effectue l'action &amp;Reference[Dash apply=false], &amp;Reference[Disengage apply=false] ou &amp;Reference[Hide apply=false].__FT_HTML_00002__"
+  },
+  {
+    "id": 10,
+    "text": "Utilisation Dépensée"
+  },
+  {
+    "id": 11,
+    "text": "Dague empoisonnée"
+  },
+  {
+    "id": 12,
+    "text": "Déguisement rapide"
+  },
+  {
+    "id": 13,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__ passe 1 minute à se déguiser en un autre Humanoïde d'environ sa taille et son poids. Tant que Jacko est déguisé, une créature effectuant l'action d'Observation pour examiner l'apparence de Jacko peut effectuer un __FT_DOUBLE_BRACKET_00002__, décelant son déguisement en cas de réussite.__FT_HTML_00002__"
+  },
+  {
+    "id": 14,
+    "text": "Cube de gelée"
+  },
+  {
+    "id": 15,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Bloc insatiable de gelée__FT_HTML_00003____FT_HTML_00004__"
+  },
+  {
+    "id": 16,
+    "text": "Engloutir"
+  },
+  {
+    "id": 17,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ se déplace jusqu'à sa Vitesse sans provoquer d'Attaques d'Opportunité. Le __FT_DOUBLE_BRACKET_00002__ remplit tout son espace et peut contenir une créature Large ou jusqu'à quatre créatures Moyennes ou Petites à l'intérieur en même temps. Le cube peut se déplacer à travers les espaces des créatures Large ou plus petites s'il a de la place à l’intérieur pour les contenir.__FT_HTML_00002____FT_HTML_00003____FT_HTML_00004__Jet de sauvegarde de Dextérité :__FT_HTML_00005__ DC __FT_DOUBLE_BRACKET_00003__, chaque créature dont l’espace est pénétré par le __FT_DOUBLE_BRACKET_00004__ pour la première fois pendant ce déplacement.__FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Échec :__FT_HTML_00009__ __FT_DOUBLE_BRACKET_00005__ dégâts, et la cible est engloutie. Une cible engloutie subit la condition &amp;Reference[restrained apply=false], bénéficie de &amp;Reference[total cover apply=false], ne peut pas lancer de sorts, et subit __FT_DOUBLE_BRACKET_00006__ dégâts d’Acide au début de chacun des tours du __FT_DOUBLE_BRACKET_00007__. Lorsque le __FT_DOUBLE_BRACKET_00008__ se déplace, la cible engloutie se déplace avec lui. Une cible engloutie peut tenter de s’échapper en utilisant une action pour faire un test __FT_DOUBLE_BRACKET_00009__. En cas de réussite, la cible s’échappe et entre dans l’espace inoccupé le plus proche.__FT_HTML_00010____FT_HTML_00011____FT_HTML_00012__Réussite :__FT_HTML_00013__ Moitié des dégâts, et la cible se déplace vers un espace inoccupé dans un rayon de 1,5 mètre du __FT_DOUBLE_BRACKET_00010__. S’il n’y a aucun espace inoccupé, la cible échoue à la sauvegarde.__FT_HTML_00014__"
+  },
+  {
+    "id": 18,
+    "text": "Couverture Totale, Suffocation & Entravé"
+  },
+  {
+    "id": 19,
+    "text": "__FT_HTML_00001__Une cible engloutie est &amp;Reference[étouffée], ne peut pas lancer de sorts avec une composante Verbale, a la condition &amp;Reference[Entravé apply=false], et subit __FT_DOUBLE_BRACKET_00001__ dégâts au début de chacun des tours de l'utilisateur.__FT_HTML_00002__"
+  },
+  {
+    "id": 20,
+    "text": "Chevalier"
+  },
+  {
+    "id": 21,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Maître de Guerre et Vagabond Héroïque__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005____FT_HTML_00006__Tailles des PNJ__FT_HTML_00007____FT_HTML_00008__Si vous utilisez cette carte pour représenter un PNJ, la taille du PNJ dépend de l'espèce indiquée sur sa Carte PNJ comme suit :__FT_HTML_00009____FT_HTML_00010____FT_HTML_00011__Nain :__FT_HTML_00012__ Moyen__FT_HTML_00013____FT_HTML_00014____FT_HTML_00015__Elfe :__FT_HTML_00016__ Moyen__FT_HTML_00017____FT_HTML_00018____FT_HTML_00019__Halfelin :__FT_HTML_00020__ Petit__FT_HTML_00021____FT_HTML_00022____FT_HTML_00023__Humain :__FT_HTML_00024__ Moyen__FT_HTML_00025____FT_HTML_00026__"
+  },
+  {
+    "id": 22,
+    "text": "Épée-Longue"
+  },
+  {
+    "id": 23,
+    "text": "Arbalète lourde"
+  },
+  {
+    "id": 24,
+    "text": "Armure de plaques"
+  },
+  {
+    "id": 25,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue deux attaques, utilisant __FT_DOUBLE_BRACKET_00002__ ou __FT_DOUBLE_BRACKET_00003__ en toute combinaison.__FT_HTML_00002__"
+  },
+  {
+    "id": 26,
+    "text": "Utilisation d'expansion"
+  },
+  {
+    "id": 27,
+    "text": "Parer"
+  },
+  {
+    "id": 28,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Déclencheur :__FT_HTML_00003__ Le __FT_DOUBLE_BRACKET_00001__ est __FT_DOUBLE_BRACKET_00002__. __FT_HTML_00004__Réponse :__FT_HTML_00005__ Le __FT_DOUBLE_BRACKET_00003__ ajoute __FT_DOUBLE_BRACKET_00004__ à sa CA contre cette attaque, ce qui peut la faire échouer.__FT_HTML_00006__"
+  },
+  {
+    "id": 29,
+    "text": "Guerrier Kobold"
+  },
+  {
+    "id": 30,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Filou et serviteur des dragons chromatiques__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Cousins lâches des dragons chromatiques, les kobolds servent de seigneurs draconiques en tant que guerriers et serviteurs. Ce qu'ils manquent en férocité, ils le compensent par le zèle et l'ingéniosité. Les guerriers kobolds utilisent des tactiques de frappe et fuite pour attaquer leurs ennemis et défendre leurs foyers.__FT_HTML_00006__"
+  },
+  {
+    "id": 31,
+    "text": "Dague"
+  },
+  {
+    "id": 32,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ a l'avantage lors d'un jet d'attaque contre une créature si au moins un des alliés du __FT_DOUBLE_BRACKET_00002__ se trouve à moins de 1,5 mètre de cette créature et que l'allié n'est pas dans l'état Incapacité.__FT_HTML_00002__"
+  },
+  {
+    "id": 33,
+    "text": "Sensibilité à la lumière du soleil"
+  },
+  {
+    "id": 34,
+    "text": "__FT_HTML_00001__Lorsqu'il est exposé à la lumière du soleil, le __FT_DOUBLE_BRACKET_00001__ subit un désavantage aux tests de compétence et aux jets d'attaque.__FT_HTML_00002__"
+  },
+  {
+    "id": 35,
+    "text": "Maraudeur Kuo-toa"
+  },
+  {
+    "id": 36,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Fanatique des profondeurs au physique pisciforme__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les Kuo-toa ont un corps humanoïde visqueux et une tête de poisson des abysses aux yeux globuleux. Ils prétendent avoir autrefois dominé des mondes entiers, leurs empires s'étendant sur terre et mer sous la bénédiction de dieux piscins.__FT_HTML_00006____FT_HTML_00007__Les Kuo-toa élaborent des complots machiavéliques pour atteindre la domination, kidnappant souvent des gens pour percer leurs secrets ou effectuant des sacrifices douteux à des dieux étranges. Ces maraudeurs rôdent dans les endroits humides, avides de verser le sang et de s'emparer du butin.__FT_HTML_00008__"
+  },
+  {
+    "id": 37,
+    "text": "Amphibie"
+  },
+  {
+    "id": 38,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ peut respirer air et eau.__FT_HTML_00002__"
+  },
+  {
+    "id": 39,
+    "text": "__FT_HTML_00001__Sous la lumière du soleil, le __FT_DOUBLE_BRACKET_00001__ subit un désavantage aux tests de capacité et aux jets d'attaque.__FT_HTML_00002__"
+  },
+  {
+    "id": 40,
+    "text": "Trancheur de saumure"
+  },
+  {
+    "id": 41,
+    "text": "Glissant"
+  },
+  {
+    "id": 42,
+    "text": "__FT_HTML_00001__L'__FT_DOUBLE_BRACKET_00001__ effectue l'action &amp;Reference[Disengage].__FT_HTML_00002__"
+  },
+  {
+    "id": 43,
+    "text": "Gardien des Hommes-Lézards"
+  },
+  {
+    "id": 44,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Gardien Reptilien de la Nature__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les gardiens hommes-lézards puisent dans la magie primordiale pour protéger les frontières de la nature. Ces gardiens territoriaux rôdent dans les marais et les jungles, émergeant de mares troubles pour traquer les intrus et les repousser. Ils manient des armes et des boucliers faits des carapaces de scarabées géants, de tortues casse-croûte, et d'autres créatures puissantes. Quand ces outils leur font défaut, ils canalisent les forces de la nature pour renforcer leurs attaques naturelles avec une salive empoisonnée.__FT_HTML_00006__"
+  },
+  {
+    "id": 45,
+    "text": "Retenir sa respiration"
+  },
+  {
+    "id": 46,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ peut retenir son souffle pendant 15 minutes.__FT_HTML_00002__"
+  },
+  {
+    "id": 47,
+    "text": "Multiattaque"
+  },
+  {
+    "id": 48,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue une attaque __FT_DOUBLE_BRACKET_00002__ et une attaque __FT_DOUBLE_BRACKET_00003__. __FT_HTML_00002__"
+  },
+  {
+    "id": 49,
+    "text": "Brochet osseux"
+  },
+  {
+    "id": 50,
+    "text": "Crachat de poison"
+  },
+  {
+    "id": 51,
+    "text": "Mime"
+  },
+  {
+    "id": 52,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Changeforme Déguisé en Objet Anodin__FT_HTML_00003____FT_HTML_00004__"
+  },
+  {
+    "id": 53,
+    "text": "Adhésif (Forme d'Objet Seulement)"
+  },
+  {
+    "id": 54,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ adhère à tout ce qui le touche. Une créature de taille Énorme ou plus petite adhérant au __FT_DOUBLE_BRACKET_00002__ a la condition &amp;Reference[Grappled apply=false] (DC d'évasion __FT_DOUBLE_BRACKET_00003__). Les tests de capacité pour échapper à cette prise ont un Désavantage.__FT_HTML_00002__"
+  },
+  {
+    "id": 55,
+    "text": "Utilisation Consommée"
+  },
+  {
+    "id": 56,
+    "text": "Empoigné"
+  },
+  {
+    "id": 57,
+    "text": "__FT_HTML_00001__La cible a la condition &amp;Reference[Empoigné apply=false] (DC d'évasion __FT_DOUBLE_BRACKET_00001__, voir l'objet source pour la DC). Les tests de capacité pour échapper à cette emprise ont un Désavantage.__FT_HTML_00002__"
+  },
+  {
+    "id": 58,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet d'attaque de mêlée :__FT_HTML_00003__ __FT_DOUBLE_BRACKET_00001__ (__FT_DOUBLE_BRACKET_00002__), portée __FT_DOUBLE_BRACKET_00003__ __FT_DOUBLE_BRACKET_00004__. __FT_HTML_00004__Touché :__FT_HTML_00005__ __FT_DOUBLE_BRACKET_00005__ dégâts — ou __FT_DOUBLE_BRACKET_00006__ dégâts si la cible est Empoignée par le mimique.__FT_HTML_00006__"
+  },
+  {
+    "id": 59,
+    "text": "Attaqué en cas d'agrippement"
+  },
+  {
+    "id": 60,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__. __FT_DOUBLE_BRACKET_00002__. Si la cible est une créature Grande ou plus petite, elle subit la condition &amp;Reference[Grapplé apply=false] (DD d'évasion __FT_DOUBLE_BRACKET_00003__). Les tests de capacité pour s'échapper de cette prise sont désavantagés.__FT_HTML_00002__"
+  },
+  {
+    "id": 61,
+    "text": "__FT_HTML_00001__Si la cible est une créature Large ou plus petite, elle obtient la condition &amp;Reference[Grappled apply=false] (évasion DD __FT_DOUBLE_BRACKET_00001__, voir l'objet source pour le DD).__FT_HTML_00002____FT_HTML_00003__Les tests de capacité pour échapper à ce lien ont__FT_HTML_00004__ un Désavantage.__FT_HTML_00005____FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Tests d'évasion (voir l'objet d'origine pour DD)__FT_HTML_00009____FT_HTML_00010____FT_HTML_00011____FT_DOUBLE_BRACKET_00002____FT_HTML_00012____FT_HTML_00013____FT_DOUBLE_BRACKET_00003____FT_HTML_00014__"
+  },
+  {
+    "id": 62,
+    "text": "Métamorphose"
+  },
+  {
+    "id": 63,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ se métamorphose pour ressembler à un objet __FT_DOUBLE_BRACKET_00002__ tout en conservant ses statistiques de jeu, ou il revient à sa véritable forme de masse. Tout équipement qu'il porte ou transporte n'est pas transformé.__FT_HTML_00002__"
+  },
+  {
+    "id": 64,
+    "text": "Minotaure de Baphomet"
+  },
+  {
+    "id": 65,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Berserker du Seigneur Démon des Bêtes__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Baphomet, Seigneur Démon des Bêtes, affirme avoir créé les minotaures et exige leur adoration. Ces brutes ressemblent davantage au puissant seigneur démon cornu qu'aux autres de leur espèce, et ils sèment le chaos au nom de cet immortel infâme. Rarement, des non-minotaures maudits par des utilisateurs de magie ou des divinités rancunières peuvent se transformer en ces monstres.__FT_HTML_00006__"
+  },
+  {
+    "id": 66,
+    "text": "Glaive Abyssal"
+  },
+  {
+    "id": 67,
+    "text": "Sang"
+  },
+  {
+    "id": 68,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__. __FT_DOUBLE_BRACKET_00002__. Si la cible est une créature __FT_DOUBLE_BRACKET_00003__ et que le __FT_DOUBLE_BRACKET_00004__ __FT_DOUBLE_BRACKET_00005__ droit vers elle juste avant la frappe, la cible subit un supplément de __FT_DOUBLE_BRACKET_00006__ dégâts et obtient la condition &amp;Reference[Prone apply=false].__FT_HTML_00002__"
+  },
+  {
+    "id": 69,
+    "text": "Attaque"
+  },
+  {
+    "id": 70,
+    "text": "Attaque en mouvement"
+  },
+  {
+    "id": 71,
+    "text": "À terre"
+  },
+  {
+    "id": 72,
+    "text": "__FT_HTML_00001__La cible a la condition &amp;Reference[Prone apply=false] si la créature attaquante a utilisé sa capacité d'attaque en mouvement.__FT_HTML_00002__"
+  },
+  {
+    "id": 73,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Subalterne cruel du chef de secte__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Un lâche servile, Narthus sert Ivlis par peur plutôt que par loyauté. Narthus passe ses journées à ramper devant Ivlis et à fouetter cruellement les nouveaux initiés du Culte du Chaos pour les mettre au pas. La nature bestiale de Narthus pousse certains cultistes à spéculer qu'il a été élevé par des animaux sauvages.__FT_HTML_00006____FT_HTML_00007__Ivlis apprécie Narthus pour son obéissance et ses fascinations morbides. Il accroît les rangs du culte par des rituels macabres, enrôlant les morts au service des objectifs dépravés du culte.__FT_HTML_00008__"
+  },
+  {
+    "id": 74,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue {count} __FT_DOUBLE_BRACKET_00002__ attaques et utilise __FT_DOUBLE_BRACKET_00003__.__FT_HTML_00002__"
+  },
+  {
+    "id": 75,
+    "text": "Masse vile"
+  },
+  {
+    "id": 76,
+    "text": "Éclair Fatal"
+  },
+  {
+    "id": 77,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__. __FT_DOUBLE_BRACKET_00002__, et le prochain jet d'attaque contre la cible avant la fin du prochain tour de __FT_DOUBLE_BRACKET_00003__ a l'avantage.__FT_HTML_00002__"
+  },
+  {
+    "id": 78,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Personnes Royales et Riches__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les nobles englobent une variété de personnes ayant une influence sociale. Ils peuvent être des dirigeants, de riches marchands, des bureaucrates insensibles, ou l'élite oisive.__FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Tailles des créatures PNJ__FT_HTML_00009____FT_HTML_00010__Si vous utilisez cette carte pour représenter un PNJ, la taille du PNJ dépend de l'espèce indiquée sur sa carte PNJ comme suit :__FT_HTML_00011____FT_HTML_00012____FT_HTML_00013__Nain :__FT_HTML_00014__ Moyen__FT_HTML_00015____FT_HTML_00016____FT_HTML_00017__Elfe :__FT_HTML_00018__ Moyen__FT_HTML_00019____FT_HTML_00020____FT_HTML_00021__Halfelin :__FT_HTML_00022__ Petit__FT_HTML_00023____FT_HTML_00024____FT_HTML_00025__Humain :__FT_HTML_00026__ Moyen__FT_HTML_00027____FT_HTML_00028__"
+  },
+  {
+    "id": 79,
+    "text": "Rapière"
+  },
+  {
+    "id": 80,
+    "text": "Parade"
+  },
+  {
+    "id": 81,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Déclencheur :__FT_HTML_00003__ Le __FT_DOUBLE_BRACKET_00001__ est __FT_DOUBLE_BRACKET_00002__. __FT_HTML_00004__Réponse :__FT_HTML_00005__ Le __FT_DOUBLE_BRACKET_00003__ ajoute __FT_DOUBLE_BRACKET_00004__ à son CA contre cette attaque, pouvant la faire échouer.__FT_HTML_00006__"
+  },
+  {
+    "id": 82,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Témoin du bizarre__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Consumés par leur soif de savoir interdit, les nothics sont des chercheurs de savoir maudits, transformés par des secrets qui n’auraient jamais dû être connus. Leurs corps d’anciens érudits sont déformés en formes surnaturelles, chacun avec une tête dominée par un gigantesque œil non clignotant.__FT_HTML_00006__"
+  },
+  {
+    "id": 83,
+    "text": "Griffe"
+  },
+  {
+    "id": 84,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue deux attaques __FT_DOUBLE_BRACKET_00002__. __FT_HTML_00002__"
+  },
+  {
+    "id": 85,
+    "text": "Regard Pourrissant"
+  },
+  {
+    "id": 86,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet de sauvegarde de Constitution :__FT_HTML_00003__ DD __FT_DOUBLE_BRACKET_00001__, __FT_DOUBLE_BRACKET_00002__ que le __FT_DOUBLE_BRACKET_00003__ peut voir dans un rayon de __FT_DOUBLE_BRACKET_00004__ pieds.__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006__Échec :__FT_HTML_00007__ __FT_DOUBLE_BRACKET_00005__ dégâts.__FT_HTML_00008____FT_HTML_00009____FT_HTML_00010__Réussite :__FT_HTML_00011__ Dégâts réduits de moitié.__FT_HTML_00012__"
+  },
+  {
+    "id": 87,
+    "text": "Enregistrer"
+  },
+  {
+    "id": 88,
+    "text": "Intuition Étrange"
+  },
+  {
+    "id": 89,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet de sauvegarde de Sagesse :__FT_HTML_00003__ DD __FT_DOUBLE_BRACKET_00001__, à __FT_DOUBLE_BRACKET_00002__ pied(s) de __FT_DOUBLE_BRACKET_00003__ pouvant voir dans un rayon de __FT_DOUBLE_BRACKET_00004__ pieds.__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006__Échec :__FT_HTML_00007__ Le __FT_DOUBLE_BRACKET_00005__ apprend magiquement un fait ou un secret concernant la cible.__FT_HTML_00008__"
+  },
+  {
+    "id": 90,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Hulk enragé et Amasseur__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les ogres sont des brutes de 3 mètres qui submergent leurs ennemis et prennent les butins qu'ils veulent. Les pillards ogres s'allient avec d'autres forces maléfiques en échange de nourriture, richesses et promesses de bataille.__FT_HTML_00006__"
+  },
+  {
+    "id": 91,
+    "text": "Gourdin"
+  },
+  {
+    "id": 92,
+    "text": "Zombie Ogre"
+  },
+  {
+    "id": 93,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Cadavre réanimé implacable__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les zombies ogres servent de main-d'œuvre infatigable et d'armes de guerre immortelles. Ces zombies massifs possèdent la taille et la force pour briser des barrières qui repoussent les zombies plus petits.__FT_HTML_00006__"
+  },
+  {
+    "id": 94,
+    "text": "Endurance des Morts-Vivants"
+  },
+  {
+    "id": 95,
+    "text": "__FT_HTML_00001__Si les dégâts réduisent le __FT_DOUBLE_BRACKET_00001__ à 0 points de vie, il doit réussir un jet de sauvegarde de Constitution (DD 5 plus les dégâts subis) sauf si les dégâts sont Radiants ou proviennent d'un Coup Critique. En cas de réussite, le __FT_DOUBLE_BRACKET_00002__ tombe à 1 point de vie à la place.__FT_HTML_00002__"
+  },
+  {
+    "id": 96,
+    "text": "Coup"
+  },
+  {
+    "id": 97,
+    "text": "Ours-loup"
+  },
+  {
+    "id": 98,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Prédateur Magiquement Parfait__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Créés il y a longtemps par des mages, les ours-loups combinent des yeux d'oiseau perçants, des plumes épaisses et un bec déchirant avec une puissante carrure d'ours. Malgré leurs origines magiques, les ours-loups se sont propagés et répandus dans les étendues sauvages à travers le multivers. Ce sont des chasseurs tenaces qui peuvent suivre leur proie sur des kilomètres et abandonnent rarement leur chasse.__FT_HTML_00006__"
+  },
+  {
+    "id": 99,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue deux attaques __FT_DOUBLE_BRACKET_00002__. __FT_HTML_00002__"
+  },
+  {
+    "id": 100,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Le bandit le plus infâme des Borderlands__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Le sourire garçon manqué et assuré de Pral orne les affiches de recherche à travers les Borderlands. Auto-proclamé « voleur gentleman », Pral suit un code personnel strict. Il ne tue jamais et respecte toujours sa part de tout accord qu'il conclut. Amateur de bonne nourriture, de logements confortables et de vêtements chics, Pral dilapide le butin de chaque vol dans son style de vie extravagant.__FT_HTML_00006__"
+  },
+  {
+    "id": 101,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Déclencheur :__FT_HTML_00003__ __FT_DOUBLE_BRACKET_00001__ est __FT_DOUBLE_BRACKET_00002__. __FT_HTML_00004__Réponse :__FT_HTML_00005__ __FT_DOUBLE_BRACKET_00003__ ajoute __FT_DOUBLE_BRACKET_00004__ à sa CA contre cette attaque, ce qui peut la faire échouer.__FT_HTML_00006__"
+  },
+  {
+    "id": 102,
+    "text": "Jeune dragon rouge"
+  },
+  {
+    "id": 103,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Dragon de cupidité et de dévastation__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les jeunes dragons rouges sont des destructeurs nés. Dès leur plus jeune âge, ils prennent plaisir à enflammer objets et créatures. Ils se retiennent parfois de brûler les créatures afin d’intimider les autres à suivre leurs ordres et leur apporter des cadeaux.__FT_HTML_00006__"
+  },
+  {
+    "id": 104,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue deux attaques __FT_DOUBLE_BRACKET_00002__.__FT_HTML_00002__"
+  },
+  {
+    "id": 105,
+    "text": "Souffle de feu"
+  },
+  {
+    "id": 106,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet de sauvegarde de Dextérité : __FT_HTML_00003__DD __FT_DOUBLE_BRACKET_00001__, chaque __FT_DOUBLE_BRACKET_00002__ dans un cône de __FT_DOUBLE_BRACKET_00003__ pieds.__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006__Échec : __FT_HTML_00007____FT_DOUBLE_BRACKET_00004__ dégâts.__FT_HTML_00008____FT_HTML_00009____FT_HTML_00010__Réussite :__FT_HTML_00011__ dégâts divisés par deux.__FT_HTML_00012__"
+  },
+  {
+    "id": 107,
+    "text": "Squelette"
+  },
+  {
+    "id": 108,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Mal ossifié__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les squelettes sont des ossements humanoïdes réanimés portant l’équipement qu’ils avaient de leur vivant. Ils ont des facultés rudimentaires et une agilité supérieure aux zombies et autres cadavres traînards.__FT_HTML_00006__"
+  },
+  {
+    "id": 109,
+    "text": "Épée courte"
+  },
+  {
+    "id": 110,
+    "text": "Éclaireur elfe"
+  },
+  {
+    "id": 111,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Défenseur insaisissable des royaumes féeriques__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les elfes sont de petites esprits de la nature capables de percevoir la bonté innée ou la méchanceté des autres créatures. Ceux qui entrent dans leurs royaumes avec de bonnes intentions peuvent être accueillis par de minuscules festins et célébrations. Les méchants affrontent des tours vicieux et des embuscades audacieuses menées par des défenseurs elfes invisibles.__FT_HTML_00006__"
+  },
+  {
+    "id": 112,
+    "text": "Épée Aiguille"
+  },
+  {
+    "id": 113,
+    "text": "Arc Enchanteur"
+  },
+  {
+    "id": 114,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__. __FT_DOUBLE_BRACKET_00002__, et la cible a la condition &amp;Reference[Charme appliqué=false] jusqu'au début du prochain tour de __FT_DOUBLE_BRACKET_00003__.__FT_HTML_00002__"
+  },
+  {
+    "id": 115,
+    "text": "Charmé"
+  },
+  {
+    "id": 116,
+    "text": "__FT_HTML_00001__La cible a la condition &amp;Reference[Charmed apply=false] jusqu'au début du prochain tour de la créature attaquante.__FT_HTML_00002__"
+  },
+  {
+    "id": 117,
+    "text": "Vision du cœur"
+  },
+  {
+    "id": 118,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet de sauvegarde de Charisme :__FT_HTML_00003__ DD __FT_DOUBLE_BRACKET_00001__, une __FT_DOUBLE_BRACKET_00002__ dans __FT_DOUBLE_BRACKET_00003__ __FT_HTML_00004__pieds __FT_HTML_00005__que __FT_DOUBLE_BRACKET_00004__ peut voir (les Célestes, Fiélons et Morts-vivants ratent automatiquement le jet).__FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Échec :__FT_HTML_00009__ __FT_DOUBLE_BRACKET_00005__ connaît les émotions et l'alignement de la cible.__FT_HTML_00010__"
+  },
+  {
+    "id": 119,
+    "text": "Invisibilité"
+  },
+  {
+    "id": 120,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ lance __FT_HTML_00002____FT_UUID_00001__{Invisibilité}__FT_HTML_00003__ sur lui-même, ne nécessitant aucun composant matériel et utilisant le Charisme comme capacité de lanceur de sorts.__FT_HTML_00004__"
+  },
+  {
+    "id": 121,
+    "text": "__FT_HTML_00001__Une créature que vous touchez reçoit la condition &amp;Reference[invisible apply=false] jusqu'à la fin du sort. Le sort se termine prématurément immédiatement après que la cible effectue un jet d'attaque, inflige des dégâts ou lance un sort.__FT_HTML_00002____FT_HTML_00003____FT_HTML_00004__Utilisation d'un emplacement de sort de niveau supérieur.__FT_HTML_00005__ Vous pouvez cibler une créature supplémentaire pour chaque niveau d'emplacement supérieur à 2.__FT_HTML_00006__"
+  },
+  {
+    "id": 122,
+    "text": "__FT_HTML_00001__Le sort se termine prématurément immédiatement après que la cible effectue un jet d'attaque, inflige des dégâts ou lance un sort.__FT_HTML_00002__"
+  },
+  {
+    "id": 123,
+    "text": "Modifications de sorts"
+  },
+  {
+    "id": 124,
+    "text": "Mephit de vapeur"
+  },
+  {
+    "id": 125,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Hooligan Élémentaire Malveillant__FT_HTML_00003____FT_HTML_00004__"
+  },
+  {
+    "id": 126,
+    "text": "Forme floue"
+  },
+  {
+    "id": 127,
+    "text": "__FT_HTML_00001__Les jets d'attaque contre le __FT_DOUBLE_BRACKET_00001__ sont effectués avec un désavantage sauf si le __FT_DOUBLE_BRACKET_00002__ est dans l'état Incapacité.__FT_HTML_00002__"
+  },
+  {
+    "id": 128,
+    "text": "Explosion à la mort"
+  },
+  {
+    "id": 129,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ explose __FT_DOUBLE_BRACKET_00002__.__FT_HTML_00002____FT_HTML_00003____FT_HTML_00004__Jet de sauvegarde de Dextérité : __FT_HTML_00005__DD __FT_DOUBLE_BRACKET_00003__, chaque __FT_DOUBLE_BRACKET_00004__ dans une émanation de __FT_DOUBLE_BRACKET_00005__ pieds provenant du __FT_DOUBLE_BRACKET_00006__.__FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Échec : __FT_HTML_00009____FT_DOUBLE_BRACKET_00007__ dégâts.__FT_HTML_00010____FT_HTML_00011____FT_HTML_00012__Réussite :__FT_HTML_00013__ dégâts divisés par deux.__FT_HTML_00014__"
+  },
+  {
+    "id": 130,
+    "text": "Souffle de vapeur"
+  },
+  {
+    "id": 131,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Jet de sauvegarde de Constitution :__FT_HTML_00003__ DD __FT_DOUBLE_BRACKET_00001__, chaque créature dans un cône de __FT_DOUBLE_BRACKET_00002__ pieds.__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006__Échec :__FT_HTML_00007__ __FT_DOUBLE_BRACKET_00003__ de dégâts, et la Vitesse de la cible diminue de 10 pieds jusqu'à la fin du __FT_DOUBLE_BRACKET_00004__ prochain tour.. __FT_HTML_00008____FT_HTML_00009____FT_HTML_00010__Réussite :__FT_HTML_00011__ Moitié des dégâts.__FT_HTML_00012____FT_HTML_00013____FT_HTML_00014__Échec ou réussite :__FT_HTML_00015__ Être sous l'eau n'accorde pas de Résistance à ces dégâts de Feu.__FT_HTML_00016__"
+  },
+  {
+    "id": 132,
+    "text": "Ralentit : 10 pi."
+  },
+  {
+    "id": 133,
+    "text": "Moucheron"
+  },
+  {
+    "id": 134,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Sangsue Notoire et Accrocheuse__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les moucherons sont des vermines de la taille d'une chauve-souris avec un proboscis long comme un poignard qui s'attache aux autres créatures et leur suce la vie. Les moucherons sont plus actifs la nuit et se cachent dans des endroits ombragés durant le jour. S'ils sont dérangés, ils prennent leur envol et se défendent.__FT_HTML_00006__"
+  },
+  {
+    "id": 135,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__. __FT_DOUBLE_BRACKET_00002__. Si la cible est une créature__FT_HTML_00002__, et que le __FT_HTML_00003____FT_DOUBLE_BRACKET_00003____FT_HTML_00004__ s'attache à la cible. Tant qu'il est attaché, le __FT_HTML_00005____FT_DOUBLE_BRACKET_00004____FT_HTML_00006__ ne peut pas effectuer d'attaques de Proboscis, et la cible subit __FT_DOUBLE_BRACKET_00005__ dégâts au début de chaque tour de __FT_HTML_00007____FT_DOUBLE_BRACKET_00006__'s__FT_HTML_00008__.\u0000__FT_HTML_00009____FT_HTML_00010____FT_HTML_00011____FT_HTML_00012__Le __FT_HTML_00013____FT_DOUBLE_BRACKET_00007____FT_HTML_00014__ peut se détacher en dépensant 5 pieds de son mouvement. La cible ou une créature à moins de 5 pieds peut détacher le __FT_HTML_00015____FT_DOUBLE_BRACKET_00008____FT_HTML_00016__ comme action.__FT_HTML_00017____FT_HTML_00018__"
+  },
+  {
+    "id": 136,
+    "text": "Attaché : Dégâts"
+  },
+  {
+    "id": 137,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Dunette en difficulté, exploreuse naine__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Cette exploratrice itinérante connaît les grottes autour du Fort des Frontières mieux que quiconque. Vinx s’aventure souvent dans ces grottes à la recherche de trésors.__FT_HTML_00006____FT_HTML_00007__Récemment, Vinx s’est retrouvée coincée en poursuivant un héritage familial volé. Lorsqu'elle sera libre, ces gobelins ne sauront pas ce qui les a frappés !__FT_HTML_00008__"
+  },
+  {
+    "id": 138,
+    "text": "__FT_HTML_00001____FT_DOUBLE_BRACKET_00001__ effectue deux attaques, utilisant __FT_DOUBLE_BRACKET_00002__ et __FT_DOUBLE_BRACKET_00003__ dans n'importe quelle combinaison.__FT_HTML_00002__"
+  },
+  {
+    "id": 139,
+    "text": "Fronde"
+  },
+  {
+    "id": 140,
+    "text": "Buveur de vie des morts-vivants"
+  },
+  {
+    "id": 141,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Guerrier mort-vivant suceur de vie__FT_HTML_00003____FT_HTML_00004__"
+  },
+  {
+    "id": 142,
+    "text": "Armure en cuir clouté"
+  },
+  {
+    "id": 143,
+    "text": "__FT_HTML_00001__Alors qu'il est au soleil, le __FT_DOUBLE_BRACKET_00001__ subit un Désavantage aux tests de compétence et aux jets d'attaque.__FT_HTML_00002__"
+  },
+  {
+    "id": 144,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue deux attaques, utilisant __FT_DOUBLE_BRACKET_00002__ ou __FT_DOUBLE_BRACKET_00003__ dans n'importe quelle combinaison. Il peut remplacer une attaque par une utilisation de __FT_DOUBLE_BRACKET_00004__.__FT_HTML_00002__"
+  },
+  {
+    "id": 145,
+    "text": "Épée nécrotique"
+  },
+  {
+    "id": 146,
+    "text": "Boire la vie"
+  },
+  {
+    "id": 147,
+    "text": "__FT_HTML_00001____FT_HTML_00002____FT_HTML_00003__Drain de vie.__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Jet de sauvegarde de Constitution :__FT_HTML_00009__ DD __FT_DOUBLE_BRACKET_00001__, un __FT_DOUBLE_BRACKET_00002__ dans un rayon de __FT_DOUBLE_BRACKET_00003__ pieds.__FT_HTML_00010____FT_HTML_00011____FT_HTML_00012__Échec :__FT_HTML_00013__ __FT_DOUBLE_BRACKET_00004__ dégâts, et le maximum de points de vie de la cible diminue d’un montant égal aux dégâts subis.__FT_HTML_00014__"
+  },
+  {
+    "id": 148,
+    "text": "Arc Nécrotique"
+  },
+  {
+    "id": 149,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Cadavre animé implacable__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Les zombies sont des cadavres réanimés, sans conscience, souvent horriblement marqués par la putréfaction. Ils servent la force surnaturelle qui les anime—généralement des nécromanciens maléfiques ou des esprits démoniaques.__FT_HTML_00006__"
+  },
+  {
+    "id": 150,
+    "text": "Endurance des morts-vivants"
+  },
+  {
+    "id": 151,
+    "text": "__FT_HTML_00001__Si les dégâts réduisent les __FT_DOUBLE_BRACKET_00001__ à 0 points de vie, il doit réussir un jet de sauvegarde de Constitution (DD 5 plus les dégâts subis), sauf si les dégâts sont Radiants ou proviennent d'un coup critique. En cas de réussite, les __FT_DOUBLE_BRACKET_00002__ tombent à 1 point de vie à la place.__FT_HTML_00002__"
+  },
+  {
+    "id": 152,
+    "text": "Frappe"
+  },
+  {
+    "id": 153,
+    "text": "__FT_HTML_00001____FT_HTML_00002____FT_HTML_00003____FT_HTML_00004__Capitaine Humain de la Garde__FT_HTML_00005____FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__Ce capitaine est fort, sévère et juste.__FT_HTML_00009____FT_HTML_00010____FT_HTML_00011__Posture Parfaite.__FT_HTML_00012__ Andrella est aussi stricte avec sa posture qu'avec la loi.__FT_HTML_00013____FT_HTML_00014____FT_HTML_00015__Modèle.__FT_HTML_00016__ Beaucoup des jeunes du donjon admirent Andrella et apprécient son mentorat bienveillant.__FT_HTML_00017____FT_HTML_00018____FT_HTML_00019__Rumeurs__FT_HTML_00020____FT_HTML_00021__« Un bandit infâme, Pral, aborde les voyageurs sur le sentier. Apparemment, il est assez séduisant ; je suis sûr qu’il sera encore plus à son avantage derrière les barreaux. » (Vrai)__FT_HTML_00022____FT_HTML_00023__« Le châtelain me dit que des monstres affluent en masse vers les Grottes du Chaos. Je me demande pourquoi. » (Vrai)__FT_HTML_00024____FT_HTML_00025____FT_HTML_00026__"
+  },
+  {
+    "id": 154,
+    "text": "Attaque multiple"
+  },
+  {
+    "id": 155,
+    "text": "__FT_HTML_00001__Le __FT_DOUBLE_BRACKET_00001__ effectue deux attaques, en utilisant __FT_DOUBLE_BRACKET_00002__ ou __FT_DOUBLE_BRACKET_00003__ dans n'importe quelle combinaison.__FT_HTML_00002__"
+  },
+  {
+    "id": 156,
+    "text": "Rope"
+  },
+  {
+    "id": 157,
+    "text": "__FT_HTML_00001__As a Utilize action, you can tie a knot with Rope if you succeed on a DC 10 Dexterity (Sleight of Hand) check. The Rope can be burst with a successful DC 20 Strength (Athletics) check.__FT_HTML_00002____FT_HTML_00003__You can bind an unwilling creature with the Rope only if the creature has the &amp;Reference[Grappled], &amp;Reference[Incapacitated], or &amp;Reference[Restrained] condition. If the creature's legs are bound, the creature has the Restrained condition until it escapes. Escaping the Rope requires the creature to make a successful DC 15 Dexterity (Acrobatics) check as an action.__FT_HTML_00004__"
+  },
+  {
+    "id": 158,
+    "text": "Tie Knot"
+  },
+  {
+    "id": 159,
+    "text": "Burst Rope"
+  },
+  {
+    "id": 160,
+    "text": "Ball Bearings"
+  },
+  {
+    "id": 161,
+    "text": "__FT_HTML_00001__As a Utilize action, you can spill Ball Bearings from their pouch. They spread to cover a level, 10-foot-square area within 10 feet of yourself. A creature that enters this area for the first time on a turn must succeed on a DC 10 Dexterity saving throw or have the &amp;Reference[Prone] condition. It takes 10 minutes to recover the Ball Bearings.__FT_HTML_00002____FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__Foundry Note__FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__The __FT_HTML_00009__Recover Ball Bearings__FT_HTML_00010__ activity grants another use of this item.__FT_HTML_00011____FT_HTML_00012__"
+  },
+  {
+    "id": 162,
+    "text": "Spill Ball Bearings"
+  },
+  {
+    "id": 163,
+    "text": "Recover Ball Bearings"
+  },
+  {
+    "id": 164,
+    "text": "Tripped"
+  },
+  {
+    "id": 165,
+    "text": "__FT_HTML_00001__While wearing this armor, you have Disadvantage on Dexterity (Stealth) checks.__FT_HTML_00002__"
+  },
+  {
+    "id": 166,
+    "text": "Cloak of Billowing"
+  },
+  {
+    "id": 167,
+    "text": "__FT_HTML_00001____FT_HTML_00002____FT_HTML_00003__Wondrous Item, Common__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006____FT_HTML_00007__While wearing this cloak, you can take a Bonus Action to make it billow dramatically for 1 minute.__FT_HTML_00008__"
+  },
+  {
+    "id": 168,
+    "text": "Billow"
+  },
+  {
+    "id": 169,
+    "text": "Clockwork Amulet"
+  },
+  {
+    "id": 170,
+    "text": "__FT_HTML_00001____FT_HTML_00002____FT_HTML_00003__Wondrous Item, Common__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006____FT_HTML_00007____FT_HTML_00008__This copper amulet contains tiny interlocking gears and is powered by magic from Mechanus, a plane of clockwork predictability. Faint ticking and whirring noises emanate from within.__FT_HTML_00009____FT_HTML_00010____FT_HTML_00011__When you make an attack roll while wearing the amulet, you can forgo rolling the d20 to get a 10 on the die. Once used, this property can’t be used again until the next dawn.__FT_HTML_00012__"
+  },
+  {
+    "id": 171,
+    "text": "Forgo Roll"
+  },
+  {
+    "id": 172,
+    "text": "Clothes of Mending"
+  },
+  {
+    "id": 173,
+    "text": "__FT_HTML_00001____FT_HTML_00002____FT_HTML_00003__Wondrous Item, Common__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006____FT_HTML_00007__This elegant outfit magically mends itself to counteract daily wear and tear. Pieces of the outfit that are destroyed can’t be repaired in this way.__FT_HTML_00008__"
+  },
+  {
+    "id": 174,
+    "text": "Dread Helm"
+  },
+  {
+    "id": 175,
+    "text": "__FT_HTML_00001____FT_HTML_00002____FT_HTML_00003__Wondrous Item, Common__FT_HTML_00004____FT_HTML_00005____FT_HTML_00006____FT_HTML_00007__While you’re wearing this fearsome steel helm, your eyes glow red and the rest of your face is hidden in shadow.__FT_HTML_00008__"
+  },
+  {
+    "id": 176,
+    "text": "Pole of Collapsing"
+  },
+  {
+    "id": 177,
+    "text": "__FT_HTML_00001____FT_HTML_00002__Wondrous Item, Common__FT_HTML_00003____FT_HTML_00004____FT_HTML_00005__This item functions as a __FT_UUID_00001__{Pole}. While holding it, you can take a Magic action to collapse it into a 1-foot-long rod for ease of storage (the pole’s weight doesn’t change) or cause the 1-foot-long rod to revert to a Pole. The rod elongates only as far as the surrounding space allows.__FT_HTML_00006__"
+  },
+  {
+    "id": 178,
+    "text": "Potion of Fire Breath"
   }
 ]
