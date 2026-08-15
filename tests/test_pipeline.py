@@ -4,6 +4,7 @@ import json
 import sys
 from pathlib import Path
 from dataclasses import replace
+from dataclasses import dataclass
 
 from foundry_translator.pipeline import (
     Pipeline,
@@ -15,6 +16,17 @@ from foundry_translator.pipeline import (
 from foundry_translator.translator import DummyTranslator
 from foundry_translator.translator import Translator
 from foundry_translator.scanner import TranslationEntry
+
+
+@dataclass(slots=True)
+class FakeFailedEntry:
+    file: Path
+    json_path: str
+    reason: str
+    missing_placeholders: list[str]
+    unexpected_placeholders: list[str]
+    debug_dir: Path | None = None
+    field: str | None = None
 
 
 class ResumableTestTranslator(Translator):
@@ -35,6 +47,25 @@ class ResumableTestTranslator(Translator):
             self.seen_sources.append(entry.source)
             translated.append(replace(entry, source=f"T:{entry.source}"))
         return translated
+
+
+class PartialFailureTranslator(Translator):
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed_entries: list[FakeFailedEntry] = []
+
+    def translate(self, entries: list[TranslationEntry]) -> list[TranslationEntry]:
+        self.failed_entries = [
+            FakeFailedEntry(
+                file=entries[0].file,
+                json_path="$['description']",
+                reason="Placeholder mismatch after translation: missing=['__FT_HTML_00001__'] unexpected=[]",
+                missing_placeholders=["__FT_HTML_00001__"],
+                unexpected_placeholders=[],
+                field=entries[0].field,
+            )
+        ]
+        return [replace(entries[1], source=f"T:{entries[1].source}")]
 
 
 def test_translation_progress_reporter_emits_batch_and_summary_output(capsys) -> None:
@@ -156,6 +187,32 @@ def test_pipeline_run_limit_truncates_translation_entries(tmp_path: Path) -> Non
 
     assert result.translated_entries == 1
     assert (output_dir / "first.translated.json").exists() or (output_dir / "second.translated.json").exists()
+
+
+def test_pipeline_counts_and_reports_failed_entries_without_stopping(tmp_path: Path, capsys) -> None:
+    input_dir = tmp_path / "input"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir(parents=True)
+
+    source_file = input_dir / "actors.json"
+    source_file.write_text(
+        json.dumps({"description": "Hello", "feature": "Brave", "name": "Hero"}),
+        encoding="utf-8",
+    )
+
+    result = Pipeline(translator=PartialFailureTranslator()).run(input_dir, output_dir)
+
+    assert result.scanned_files == 1
+    assert result.translated_entries == 1
+    assert result.errors == 1
+    assert (output_dir / "actors.translated.json").exists()
+
+    captured = capsys.readouterr()
+    assert "Failed entries:" in captured.out
+    assert "actors.json.description" in captured.out
+    assert "$['description']" in captured.out
+    assert "missing: ['__FT_HTML_00001__']" in captured.out
+    assert "unexpected: []" in captured.out
 
 
 def test_pipeline_resume_interrupted_run_persists_progress(tmp_path: Path) -> None:

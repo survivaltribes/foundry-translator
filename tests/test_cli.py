@@ -36,6 +36,7 @@ def test_build_parser_supports_replay_restore_and_fast_run_options() -> None:
     assert run_args.only_file == "sample.json"
     assert run_args.limit == 5
     assert run_args.resume is False
+    assert run_args.continue_on_placeholder_mismatch is False
 
     resumed_run_args = parser.parse_args([
         "run",
@@ -47,6 +48,17 @@ def test_build_parser_supports_replay_restore_and_fast_run_options() -> None:
     ])
     assert resumed_run_args.command == "run"
     assert resumed_run_args.resume is True
+
+    continued_run_args = parser.parse_args([
+        "run",
+        "--input",
+        "input",
+        "--output",
+        "output",
+        "--continue-on-placeholder-mismatch",
+    ])
+    assert continued_run_args.command == "run"
+    assert continued_run_args.continue_on_placeholder_mismatch is True
 
     replay_args = parser.parse_args([
         "replay-restore",
@@ -71,6 +83,18 @@ def test_build_translator_uses_openai_by_default(monkeypatch: pytest.MonkeyPatch
     translator = build_translator()
 
     assert isinstance(translator, OpenAITranslator)
+    assert translator.continue_on_placeholder_mismatch is False
+
+
+def test_build_translator_can_enable_continue_on_placeholder_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    translator = build_translator(continue_on_placeholder_mismatch=True)
+
+    assert isinstance(translator, OpenAITranslator)
+    assert translator.continue_on_placeholder_mismatch is True
 
 
 def test_build_translator_honors_injected_translator() -> None:

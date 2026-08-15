@@ -64,12 +64,26 @@ class RestoreReplayArtifacts:
 
 
 @dataclass(slots=True)
+class FailedTranslationEntry:
+    """Structured report entry for a translation skipped after a fatal mismatch."""
+
+    file: Path
+    json_path: str
+    reason: str
+    missing_placeholders: list[str]
+    unexpected_placeholders: list[str]
+    debug_dir: Path | None = None
+    field: str | None = None
+
+
+@dataclass(slots=True)
 class PlaceholderMismatchDetails:
     """Details about a placeholder mismatch detected before restore."""
 
     chunk_index: int
     entry_index: int
     entry: TranslationEntry
+    matching_entries: list[tuple[int, TranslationEntry]]
     protected_text: ProtectedText
     translated_protected_text: str
     expected_placeholders: list[str]
@@ -139,6 +153,7 @@ class OpenAITranslator:
         client: OpenAI | None = None,
         logger: logging.Logger | None = None,
         cache: Any = None,
+        continue_on_placeholder_mismatch: bool = False,
     ) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -172,12 +187,14 @@ class OpenAITranslator:
         self.client = client or OpenAI(api_key=self.api_key, timeout=self.timeout)
         self.logger = logger or logging.getLogger(__name__)
         self.cache = cache
+        self.continue_on_placeholder_mismatch = continue_on_placeholder_mismatch
         self.protector = Protect()
         self._progress_reporter: Any | None = None
         self._progress_context: dict[str, Any] | None = None
         self._last_prompt_for_count_error: str = ""
         self._last_response_for_count_error: str = ""
         self._last_response_metadata_for_count_error: dict[str, Any] = {}
+        self.failed_entries: list[FailedTranslationEntry] = []
 
     def translate_batch(
         self,
@@ -259,6 +276,8 @@ class OpenAITranslator:
         if not entries:
             return []
 
+        self.failed_entries = []
+
         results: list[TranslationEntry | None] = [None] * len(entries)
         pending_groups: list[tuple[str, list[tuple[int, TranslationEntry]], Any]] = []
         pending_sources: dict[str, int] = {}
@@ -292,6 +311,7 @@ class OpenAITranslator:
         translated_protected_texts: list[str] = []
         translated_protected_origins: list[str] = []
         tolerated_protected_overrides: dict[str, ProtectedText] = {}
+        skipped_sources: set[str] = set()
         for batch_number, chunk in enumerate(batches, start=1):
             self._progress_context["current_batch"] = batch_number
             self._progress_context["current_file"] = None
@@ -366,7 +386,13 @@ class OpenAITranslator:
                         )
 
                     if fatal_mismatches:
-                        raise self._raise_placeholder_mismatch_after_retry(fatal_mismatches)
+                        if not self.continue_on_placeholder_mismatch:
+                            raise self._raise_placeholder_mismatch_after_retry(fatal_mismatches)
+
+                        for mismatch in fatal_mismatches:
+                            source = chunk[mismatch.chunk_index][0]
+                            skipped_sources.add(source)
+                            self.failed_entries.extend(self._record_failed_mismatch_entries(mismatch))
 
             translated_protected_texts.extend(translated_chunk)
             translated_protected_origins.extend(translated_chunk_origins)
@@ -379,6 +405,8 @@ class OpenAITranslator:
             translated_protected_origins,
             strict=True,
         ):
+            if source in skipped_sources:
+                continue
             protected_text_for_restore = tolerated_protected_overrides.get(source, protected_text)
             entry_index, entry = matching_entries[0]
             if getattr(self, "_resume_diagnostics_active", False) and not first_restore_logged:
@@ -1237,6 +1265,34 @@ class OpenAITranslator:
         placeholder_pattern = getattr(self.protector, "_PLACEHOLDER_PATTERN", re.compile(r"__FT_[A-Z_]+_\d{5}__"))
         return [match.group(0) for match in placeholder_pattern.finditer(text)]
 
+    def _select_trace_placeholder(
+        self,
+        *,
+        protected_source: str,
+        translated_text: str,
+        preferred_placeholders: list[str] | None = None,
+    ) -> str | None:
+        """Select a placeholder to trace for the current entry diagnostics."""
+
+        for name in preferred_placeholders or []:
+            if name:
+                return name
+
+        expected_placeholders = self._extract_placeholders_from_text(protected_source)
+        translated_placeholders = self._extract_placeholders_from_text(translated_text)
+        expected_counter = Counter(expected_placeholders)
+        translated_counter = Counter(translated_placeholders)
+
+        for placeholder_name, expected_count in expected_counter.items():
+            if translated_counter.get(placeholder_name, 0) < expected_count:
+                return placeholder_name
+
+        if expected_placeholders:
+            return expected_placeholders[0]
+        if translated_placeholders:
+            return translated_placeholders[0]
+        return None
+
     def _collect_placeholder_mismatches(
         self,
         chunk: list[tuple[str, list[tuple[int, TranslationEntry]], Any]],
@@ -1246,24 +1302,42 @@ class OpenAITranslator:
         for chunk_index, ((_source, matching_entries, protected_text), translated_protected_text) in enumerate(
             zip(chunk, translated_chunk, strict=True)
         ):
+            expected_placeholders = self._extract_placeholders_from_text(protected_text.protected)
+            trace_placeholder_name = self._select_trace_placeholder(
+                protected_source=protected_text.protected,
+                translated_text=translated_protected_text,
+                preferred_placeholders=expected_placeholders,
+            )
+
             # Validate placeholders against the effective restore input, so plain
             # translated text can still be injected into masked text as before.
             _sanitized, restore_attempt, _should_restore = self._prepare_restore_attempt(
                 protected_text,
                 translated_protected_text,
+                trace_placeholder_name=trace_placeholder_name,
             )
 
-            expected_placeholders = self._extract_placeholders_from_text(protected_text.protected)
             actual_placeholders = self._extract_placeholders_from_text(restore_attempt)
             missing_placeholders = sorted(set(expected_placeholders) - set(actual_placeholders))
             unexpected_placeholders = sorted(set(actual_placeholders) - set(expected_placeholders))
 
+            if missing_placeholders:
+                trace_placeholder_name = missing_placeholders[0]
+            elif unexpected_placeholders:
+                trace_placeholder_name = unexpected_placeholders[0]
+
             if getattr(self, "_resume_diagnostics_active", False):
                 raw_actual_placeholders = self._extract_placeholders_from_text(translated_protected_text)
-                trace_missing = self._TRACE_PLACEHOLDER_NAME not in raw_actual_placeholders
-                trace_present = self._TRACE_PLACEHOLDER_NAME in raw_actual_placeholders
-                if trace_missing or not trace_present:
-                    expected_index = protected_text.protected.find(self._TRACE_PLACEHOLDER_NAME)
+                trace_missing = (
+                    trace_placeholder_name is not None
+                    and trace_placeholder_name not in raw_actual_placeholders
+                )
+                trace_present = (
+                    trace_placeholder_name is not None
+                    and trace_placeholder_name in raw_actual_placeholders
+                )
+                if trace_placeholder_name is not None and (trace_missing or not trace_present):
+                    expected_index = protected_text.protected.find(trace_placeholder_name)
                     context = ""
                     if translated_protected_text:
                         center = min(max(expected_index, 0), len(translated_protected_text) - 1)
@@ -1274,7 +1348,7 @@ class OpenAITranslator:
                         "resume diagnostics: placeholder first missing in translated_protected chunk_index=%s local_index=%s placeholder=%s present=%s missing=%s context=%r",
                         getattr(self, "_resume_diagnostics_chunk_index", "n/a"),
                         chunk_index,
-                        self._TRACE_PLACEHOLDER_NAME,
+                        trace_placeholder_name,
                         trace_present,
                         trace_missing,
                         context,
@@ -1289,6 +1363,7 @@ class OpenAITranslator:
                     chunk_index=chunk_index,
                     entry_index=entry_index,
                     entry=entry,
+                    matching_entries=matching_entries,
                     protected_text=protected_text,
                     translated_protected_text=translated_protected_text,
                     expected_placeholders=expected_placeholders,
@@ -1298,6 +1373,53 @@ class OpenAITranslator:
                 )
             )
         return mismatches
+
+    def _record_failed_mismatch_entries(self, mismatch: PlaceholderMismatchDetails) -> list[FailedTranslationEntry]:
+        exception_message = (
+            "Placeholder mismatch after translation: "
+            f"missing={mismatch.missing_placeholders} "
+            f"unexpected={mismatch.unexpected_placeholders}"
+        )
+        debug_dir = self._persist_restore_debug_artifacts(
+            exception_message=exception_message,
+            original_source=mismatch.protected_text.original,
+            protected_source=mismatch.protected_text.protected,
+            translated_protected=mismatch.translated_protected_text,
+            sanitized_translated=mismatch.translated_protected_text,
+            placeholders_before_restore=mismatch.expected_placeholders,
+            placeholders_after_restore=mismatch.actual_placeholders,
+            file_name=mismatch.entry.file.name,
+            field_name=mismatch.entry.field,
+            json_path=mismatch.entry.path,
+            restored_attempt=mismatch.translated_protected_text,
+        )
+
+        failed_entries: list[FailedTranslationEntry] = []
+        for _index, entry in mismatch.matching_entries:
+            json_path = self._render_json_path(entry.path)
+            self.logger.error(
+                "recorded failed translation entry",
+                extra={
+                    "file": str(entry.file),
+                    "field": entry.field,
+                    "json_path": json_path,
+                    "reason": exception_message,
+                    "debug_dir": str(debug_dir),
+                },
+            )
+            failed_entries.append(
+                FailedTranslationEntry(
+                    file=entry.file,
+                    json_path=json_path,
+                    reason=exception_message,
+                    missing_placeholders=list(mismatch.missing_placeholders),
+                    unexpected_placeholders=list(mismatch.unexpected_placeholders),
+                    debug_dir=debug_dir,
+                    field=entry.field,
+                )
+            )
+
+        return failed_entries
 
     def _raise_placeholder_mismatch_after_retry(self, mismatches: list[PlaceholderMismatchDetails]) -> Exception:
         debug_dirs: list[str] = []
@@ -1347,10 +1469,21 @@ class OpenAITranslator:
         *,
         stage: str,
         text: str,
-        placeholder_name: str,
+        placeholder_name: str | None,
         expected_index: int | None,
     ) -> None:
         """Emit presence and local context for a traced placeholder at a pipeline stage."""
+
+        if not placeholder_name:
+            self.logger.info(
+                "placeholder trace: stage=%s placeholder=%s present=%s location=%s context=%r",
+                stage,
+                None,
+                False,
+                -1,
+                "",
+            )
+            return
 
         if expected_index is None:
             expected_index = -1
@@ -1422,25 +1555,54 @@ class OpenAITranslator:
             removed_tail_is_protected_suffix = bool(removed_tail) and protected_source.endswith(removed_tail)
             if not removed_tail_is_protected_suffix:
                 for placeholder_name in removed_counter:
+                    if sanitized_counter.get(placeholder_name, 0) <= 0:
+                        expected_index = protected_source.find(placeholder_name)
+                        self._log_placeholder_trace_stage(
+                            stage="before_sanitization_non_duplicated_assert_input",
+                            text=translated_text,
+                            placeholder_name=placeholder_name,
+                            expected_index=expected_index,
+                        )
+                        self._log_placeholder_trace_stage(
+                            stage="before_sanitization_non_duplicated_assert_output",
+                            text=sanitized,
+                            placeholder_name=placeholder_name,
+                            expected_index=expected_index,
+                        )
                     assert sanitized_counter.get(placeholder_name, 0) > 0, (
                         "Sanitization removed a non-duplicated placeholder"
                     )
 
         return sanitized
 
-    def _prepare_restore_attempt(self, protected_text: Any, translated_text: str) -> tuple[str, str, bool]:
+    def _prepare_restore_attempt(
+        self,
+        protected_text: Any,
+        translated_text: str,
+        trace_placeholder_name: str | None = None,
+    ) -> tuple[str, str, bool]:
         """Return sanitized and restore-attempt texts plus whether restore should run."""
+
+        if trace_placeholder_name is None:
+            trace_placeholder_name = self._select_trace_placeholder(
+                protected_source=protected_text.protected,
+                translated_text=translated_text,
+            )
 
         sanitized_translated_text = self._sanitize_translated_protected_text(
             translated_text=translated_text,
             protected_source=protected_text.protected,
         )
 
-        expected_index = protected_text.protected.find(self._TRACE_PLACEHOLDER_NAME)
+        expected_index = (
+            protected_text.protected.find(trace_placeholder_name)
+            if trace_placeholder_name is not None
+            else -1
+        )
         self._log_placeholder_trace_stage(
             stage="after_sanitization",
             text=sanitized_translated_text,
-            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            placeholder_name=trace_placeholder_name,
             expected_index=expected_index,
         )
 
@@ -1448,7 +1610,7 @@ class OpenAITranslator:
             self._log_placeholder_trace_stage(
                 stage="after_inject_translation_into_masked_text",
                 text=sanitized_translated_text,
-                placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+                placeholder_name=trace_placeholder_name,
                 expected_index=expected_index,
             )
             return sanitized_translated_text, sanitized_translated_text, False
@@ -1459,7 +1621,7 @@ class OpenAITranslator:
             self._log_placeholder_trace_stage(
                 stage="after_inject_translation_into_masked_text",
                 text=sanitized_translated_text,
-                placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+                placeholder_name=trace_placeholder_name,
                 expected_index=expected_index,
             )
             return sanitized_translated_text, sanitized_translated_text, False
@@ -1469,7 +1631,7 @@ class OpenAITranslator:
             self._log_placeholder_trace_stage(
                 stage="after_inject_translation_into_masked_text",
                 text=sanitized_translated_text,
-                placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+                placeholder_name=trace_placeholder_name,
                 expected_index=expected_index,
             )
             return sanitized_translated_text, sanitized_translated_text, True
@@ -1481,7 +1643,7 @@ class OpenAITranslator:
         self._log_placeholder_trace_stage(
             stage="after_inject_translation_into_masked_text",
             text=translated_masked_text,
-            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            placeholder_name=trace_placeholder_name,
             expected_index=expected_index,
         )
         return sanitized_translated_text, translated_masked_text, True
@@ -1489,22 +1651,32 @@ class OpenAITranslator:
     def _restore_protected_text(self, protected_text: Any, translated_text: str) -> str:
         """Restore protected markers into translated text while preserving surrounding content."""
 
-        expected_index = protected_text.protected.find(self._TRACE_PLACEHOLDER_NAME)
+        trace_placeholder_name = self._select_trace_placeholder(
+            protected_source=protected_text.protected,
+            translated_text=translated_text,
+        )
+        expected_index = (
+            protected_text.protected.find(trace_placeholder_name)
+            if trace_placeholder_name is not None
+            else -1
+        )
         self._log_placeholder_trace_stage(
             stage="protected_source",
             text=protected_text.protected,
-            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            placeholder_name=trace_placeholder_name,
             expected_index=expected_index,
         )
         self._log_placeholder_trace_stage(
             stage="translated_protected",
             text=translated_text,
-            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            placeholder_name=trace_placeholder_name,
             expected_index=expected_index,
         )
 
         _, restored_attempt, should_restore = self._prepare_restore_attempt(
-            protected_text, translated_text
+            protected_text,
+            translated_text,
+            trace_placeholder_name=trace_placeholder_name,
         )
 
         if not should_restore:
@@ -1513,7 +1685,7 @@ class OpenAITranslator:
         self._log_placeholder_trace_stage(
             stage="before_protect_restore",
             text=restored_attempt,
-            placeholder_name=self._TRACE_PLACEHOLDER_NAME,
+            placeholder_name=trace_placeholder_name,
             expected_index=expected_index,
         )
 

@@ -1,0 +1,1 @@
+$['entries']['Rogue (Level 1)']['items']['Sneak Attack']['description']

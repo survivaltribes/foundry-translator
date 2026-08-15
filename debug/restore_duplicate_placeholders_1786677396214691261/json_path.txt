@@ -1,0 +1,1 @@
+$['entries']['Heroes of the Borderlands']['journals']['Play Guide']['pages']['Your Turn']['text']

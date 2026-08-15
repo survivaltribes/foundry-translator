@@ -1,1 +1,0 @@
-Placeholder mismatch after translation: missing=['__FT_EMBED_00001__', '__FT_HTML_00001__', '__FT_HTML_00002__', '__FT_MACRO_00001__'] unexpected=[]

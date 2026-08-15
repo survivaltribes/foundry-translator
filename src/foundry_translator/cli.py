@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Resume an interrupted translation run using output/progress.json",
     )
+    run_parser.add_argument(
+        "--continue-on-placeholder-mismatch",
+        action="store_true",
+        help="Continue translating after placeholder mismatches and report failed entries at the end",
+    )
 
     replay_parser = subparsers.add_parser(
         "replay-restore",
@@ -49,7 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_translator(translator: Translator | None = None) -> Translator:
+def build_translator(
+    translator: Translator | None = None,
+    *,
+    continue_on_placeholder_mismatch: bool = False,
+) -> Translator:
     if translator is not None:
         return translator
 
@@ -67,6 +76,7 @@ def build_translator(translator: Translator | None = None) -> Translator:
             model="gpt-4.1-mini",
             target_language="French",
             batch_size=5,
+            continue_on_placeholder_mismatch=continue_on_placeholder_mismatch,
         )
 
     logger.warning("OPENAI_API_KEY not set; falling back to the dummy translator")
@@ -92,7 +102,11 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("Input directory does not exist: %s", input_dir)
         return 2
 
-    pipeline = Pipeline(translator=build_translator())
+    pipeline = Pipeline(
+        translator=build_translator(
+            continue_on_placeholder_mismatch=args.continue_on_placeholder_mismatch,
+        )
+    )
     result = pipeline.run(
         input_dir,
         output_dir,

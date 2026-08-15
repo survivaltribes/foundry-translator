@@ -1,1 +1,0 @@
-Hello @Embed[foo] and {{macro}}

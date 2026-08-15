@@ -1,0 +1,1 @@
+dnd-heroes-borderlands.actors.translated.json

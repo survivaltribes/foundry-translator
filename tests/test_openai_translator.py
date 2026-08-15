@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 
 from foundry_translator.openai_translator import OpenAITranslatorCountError
+from foundry_translator.openai_translator import FailedTranslationEntry
 from foundry_translator.openai_translator import PlaceholderMismatchError
 from foundry_translator.openai_translator import OpenAITranslator
 from foundry_translator.scanner import TranslationEntry
@@ -300,6 +301,8 @@ def test_placeholder_mismatch_persists_artifacts_and_logs_context(
     with pytest.raises(PlaceholderMismatchError, match="Placeholder mismatch after translation"):
         translator.translate(entries)
 
+    assert len(translator.failed_entries) == 0
+
     assert (debug_dir / "original_source.txt").read_text(encoding="utf-8") == "<p>Hello</p>"
     assert "__FT_HTML_00001__" in (debug_dir / "protected_source.txt").read_text(encoding="utf-8")
     assert (
@@ -384,6 +387,8 @@ def test_non_duplicate_restore_value_error_persists_replayable_artifacts(
 
     with pytest.raises(PlaceholderMismatchError, match="Placeholder mismatch after translation"):
         translator.translate(entries)
+
+    assert len(translator.failed_entries) == 0
 
     assert (debug_dir / "exception.txt").read_text(encoding="utf-8").startswith("Placeholder mismatch after translation")
     assert (debug_dir / "original_source.txt").read_text(encoding="utf-8") == "<p>Hello</p>"
@@ -599,6 +604,159 @@ def test_e1_tolerates_missing_empty_strong_pair_with_warning(
     assert getattr(warning, "severity", None) == "WARNING"
     assert set(getattr(warning, "placeholders", [])) == strong_placeholders
     assert getattr(warning, "pipeline_continues", None) is True
+
+
+def test_translate_records_failed_entry_and_continues_after_placeholder_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = Mock()
+    client.responses.create.side_effect = [
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {"id": 1, "translation": "Broken output __FT_ROLL_COMMAND_00001__"},
+                        {
+                            "id": 2,
+                            "translation": "__FT_HTML_00001__Bonjour __FT_UUID_00001____FT_HTML_00002__",
+                        },
+                    ]
+                }
+            )
+        ),
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {"id": 1, "translation": "Broken output __FT_ROLL_COMMAND_00001__"},
+                    ]
+                }
+            )
+        ),
+    ]
+
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=2,
+        client=client,
+        continue_on_placeholder_mismatch=True,
+    )
+
+    debug_dir = tmp_path / "debug" / "restore_duplicate_placeholders_failed_entry"
+    monkeypatch.setattr(translator, "_get_restore_debug_artifact_dir", lambda: debug_dir)
+    caplog.set_level("WARNING")
+
+    failing_entry = TranslationEntry(
+        file=Path("actors.json"),
+        path=["entries", "Rogue", "description"],
+        field="description",
+        source="<p>Hello 1d6</p>",
+    )
+    successful_entry = TranslationEntry(
+        file=Path("actors.json"),
+        path=["entries", "Rogue", "feature"],
+        field="feature",
+        source="<p>Hello @UUID[JournalEntry.example.JournalEntryPage.sample]{Actions}</p>",
+    )
+
+    translated = translator.translate([failing_entry, successful_entry])
+
+    assert [entry.path for entry in translated] == [successful_entry.path]
+    assert translated[0].source.startswith("<p>Bonjour ")
+    assert "@UUID[JournalEntry.example.JournalEntryPage.sample]" in translated[0].source
+    assert translated[0].source.endswith("</p>")
+
+    assert hasattr(translator, "failed_entries")
+    failed_entries = translator.failed_entries
+    assert len(failed_entries) == 1
+    failed_entry = failed_entries[0]
+    assert isinstance(failed_entry, FailedTranslationEntry)
+    assert failed_entry.file == failing_entry.file
+    assert failed_entry.json_path == "$['entries']['Rogue']['description']"
+    assert failed_entry.reason.startswith("Placeholder mismatch after translation:")
+    assert failed_entry.missing_placeholders == ["__FT_HTML_00001__", "__FT_HTML_00002__"]
+    assert failed_entry.unexpected_placeholders == []
+    assert failed_entry.debug_dir is not None
+    assert failed_entry.debug_dir.exists()
+
+    assert any(record.getMessage() == "recorded failed translation entry" for record in caplog.records)
+
+
+def test_translate_failed_entries_are_reset_between_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    client = Mock()
+    client.responses.create.side_effect = [
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {"id": 1, "translation": "Broken output __FT_ROLL_COMMAND_00001__"},
+                    ]
+                }
+            )
+        ),
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {"id": 1, "translation": "Broken output __FT_ROLL_COMMAND_00001__"},
+                    ]
+                }
+            )
+        ),
+        SimpleNamespace(
+            output_text=json.dumps(
+                {
+                    "translations": [
+                        {"id": 1, "translation": "__FT_HTML_00001__Bonjour__FT_HTML_00002__"},
+                    ]
+                }
+            )
+        ),
+    ]
+
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=1,
+        client=client,
+        continue_on_placeholder_mismatch=True,
+    )
+    monkeypatch.setattr(
+        translator,
+        "_get_restore_debug_artifact_dir",
+        lambda: tmp_path / "debug" / "restore_duplicate_placeholders_failed_entry",
+    )
+
+    translator.translate(
+        [
+            TranslationEntry(
+                file=Path("actors.json"),
+                path=["entries", "Rogue", "description"],
+                field="description",
+                source="<p>Hello 1d6</p>",
+            )
+        ]
+    )
+    assert len(translator.failed_entries) == 1
+
+    translated = translator.translate(
+        [
+            TranslationEntry(
+                file=Path("actors.json"),
+                path=["entries", "Rogue", "ok"],
+                field="ok",
+                source="<p>Hello</p>",
+            )
+        ]
+    )
+
+    assert len(translator.failed_entries) == 0
+    assert translated[0].source == "<p>Bonjour</p>"
 
 
 def test_strip_appended_original_protected_source_keeps_normal_translation() -> None:

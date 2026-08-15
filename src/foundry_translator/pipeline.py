@@ -303,6 +303,8 @@ class Pipeline:
         else:
             translated_entries = self.translator.translate(entries)
 
+        failed_entries = list(getattr(self.translator, "failed_entries", []))
+
         for document in documents:
             destination = output_path / document.path.relative_to(input_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +324,7 @@ class Pipeline:
             output_dir=output_path,
             scanned_files=len(documents),
             translated_entries=len(translated_entries),
-            errors=len(issues),
+            errors=len(issues) + len(failed_entries),
             duration_seconds=duration,
         )
 
@@ -333,6 +335,8 @@ class Pipeline:
             result.errors,
             result.duration_seconds,
         )
+        if failed_entries:
+            print(self._render_failed_entries_report(failed_entries), flush=True)
         print(reporter.summary(), flush=True)
         return result
 
@@ -376,6 +380,7 @@ class Pipeline:
                 raise ValueError("Cannot resume: input files changed since previous run")
 
         translated_by_key: dict[tuple[str, tuple[Any, ...], str], Any] = {}
+        all_failed_entries: list[Any] = []
         for payload in progress.translated_entries:
             restored = self._entry_from_progress(payload)
             key = self._entry_key(restored)
@@ -408,6 +413,7 @@ class Pipeline:
                 self.translator.__dict__["_resume_diagnostics_loaded_entries"] = len(translated_by_key)
 
             translated_chunk_entries = self.translator.translate(chunk_entries)
+            all_failed_entries.extend(list(getattr(self.translator, "failed_entries", [])))
             logger.info(
                 "resume diagnostics: chunk=%s source=fresh_translation produced_entries=%s",
                 chunk_index,
@@ -440,8 +446,27 @@ class Pipeline:
             self.translator.__dict__.pop("_resume_diagnostics_chunk_index", None)
             self.translator.__dict__.pop("_resume_diagnostics_loaded_entries", None)
             self.translator.__dict__.pop("_resume_diagnostics_active", None)
+        if hasattr(self.translator, "failed_entries"):
+            self.translator.failed_entries = all_failed_entries
 
         return translated_entries
+
+    def _render_failed_entries_report(self, failed_entries: list[Any]) -> str:
+        lines = ["Failed entries:"]
+        for index, failed_entry in enumerate(failed_entries, start=1):
+            header = f"{index}. {failed_entry.file.name}"
+            if getattr(failed_entry, "field", None):
+                header = f"{index}. {failed_entry.file.name}.{failed_entry.field}"
+            lines.append(header)
+            lines.append(f"   json_path: {failed_entry.json_path}")
+            if getattr(failed_entry, "missing_placeholders", None) is not None:
+                lines.append(f"   missing: {failed_entry.missing_placeholders}")
+            if getattr(failed_entry, "unexpected_placeholders", None) is not None:
+                lines.append(f"   unexpected: {failed_entry.unexpected_placeholders}")
+            lines.append(f"   reason: {failed_entry.reason}")
+            if getattr(failed_entry, "debug_dir", None) is not None:
+                lines.append(f"   debug_dir: {failed_entry.debug_dir}")
+        return "\n".join(lines)
 
     def _build_input_signature(
         self,
