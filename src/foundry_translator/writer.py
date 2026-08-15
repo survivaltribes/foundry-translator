@@ -25,6 +25,8 @@ class JsonWriter:
         payload = self.load(source_file)
 
         for entry in entries:
+            if entry.file != source_file:
+                continue
             self._apply_translation(payload, entry.path, entry.source)
 
         self._validate_payload(payload)

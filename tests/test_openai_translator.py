@@ -93,6 +93,42 @@ def test_translate_batch_batches_by_prompt_size() -> None:
     assert len(observed_prompts) >= 1
 
 
+def test_translate_batch_batches_by_max_items() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=2,
+        max_prompt_chars=10000,
+    )
+
+    observed_batch_sizes: list[int] = []
+
+    def fake_call_openai(prompt: str) -> str:
+        request_items = translator._extract_input_items_from_prompt(prompt)
+        observed_batch_sizes.append(len(request_items))
+        return json.dumps(
+            {
+                "translations": [
+                    {"id": item["id"], "translation": f"translated-{item['id']}"}
+                    for item in request_items
+                ]
+            }
+        )
+
+    translator._call_openai = fake_call_openai  # type: ignore[assignment]
+
+    texts = [f"hello-{index}" for index in range(5)]
+    translated = translator.translate_batch(
+        texts,
+        source_language="English",
+        target_language="French",
+    )
+
+    assert len(translated) == len(texts)
+    assert observed_batch_sizes == [2, 2, 1]
+
+
 def test_translate_batches_entry_payloads_by_prompt_size() -> None:
     translator = OpenAITranslator(
         api_key="test-key",
@@ -127,6 +163,42 @@ def test_translate_batches_entry_payloads_by_prompt_size() -> None:
     assert len(translated) == len(entries)
     assert all(len(prompt) <= 500 for prompt in observed_prompts)
     assert len(observed_prompts) >= 1
+
+
+def test_translate_batches_entry_payloads_by_max_items() -> None:
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=2,
+        max_prompt_chars=10000,
+    )
+
+    observed_batch_sizes: list[int] = []
+
+    def fake_call_openai(prompt: str) -> str:
+        request_items = translator._extract_input_items_from_prompt(prompt)
+        observed_batch_sizes.append(len(request_items))
+        return json.dumps(
+            {
+                "translations": [
+                    {"id": item["id"], "translation": f"translated-{item['id']}"}
+                    for item in request_items
+                ]
+            }
+        )
+
+    translator._call_openai = fake_call_openai  # type: ignore[assignment]
+
+    entries = [
+        TranslationEntry(file=Path(f"{index}.json"), path=["name"], field="name", source=f"Hello {index}")
+        for index in range(5)
+    ]
+
+    translated = translator.translate(entries)
+
+    assert len(translated) == len(entries)
+    assert observed_batch_sizes == [2, 2, 1]
 
 
 def test_invalid_json_persists_full_prompt_and_response_and_logs_parse_error(
@@ -434,6 +506,99 @@ def test_placeholder_mismatch_retries_only_failing_entries() -> None:
     assert len(observed_requests) == 2
     assert observed_requests[0] == [protected_one, protected_two]
     assert observed_requests[1] == [protected_two]
+
+
+def test_e1_tolerates_missing_empty_strong_pair_with_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = Mock()
+    translator = OpenAITranslator(
+        api_key="test-key",
+        model="gpt-4.1-mini",
+        target_language="French",
+        batch_size=1,
+        client=client,
+    )
+
+    source = (
+        "A character's<strong> </strong>and a creature's options are listed in "
+        "@UUID[JournalEntry.example.JournalEntryPage.sample]{Actions}."
+    )
+    protected_text = translator.protector.protect(source)
+
+    strong_placeholders = {
+        placeholder_name
+        for placeholder_name, placeholder in protected_text.placeholders.items()
+        if hasattr(placeholder, "original") and placeholder.original in {"<strong>", "</strong>"}
+    }
+    assert len(strong_placeholders) == 2
+
+    non_html_placeholders = [
+        placeholder_name
+        for placeholder_name, placeholder in protected_text.placeholders.items()
+        if hasattr(placeholder, "category") and placeholder.category != "HTML"
+    ]
+    assert non_html_placeholders
+    kept_non_html_placeholder = non_html_placeholders[0]
+
+    # Keep at least one non-HTML placeholder in the model output on purpose:
+    # if all placeholders disappear, restore can follow a different reconstruction
+    # path and this no longer reproduces the real incident.
+    client.responses.create.return_value = SimpleNamespace(
+        output_text=json.dumps(
+            {
+                "translations": [
+                    {
+                        "id": 1,
+                        "translation": (
+                            "La fiche de personnage et celle de creature listent les options "
+                            f"{kept_non_html_placeholder}."
+                        ),
+                    }
+                ]
+            }
+        )
+    )
+
+    debug_dir = tmp_path / "debug" / "restore_duplicate_placeholders_characterization"
+    monkeypatch.setattr(
+        translator,
+        "_get_restore_debug_artifact_dir",
+        lambda: debug_dir,
+    )
+
+    entries = [
+        TranslationEntry(
+            file=Path("sample.json"),
+            path=["description"],
+            field="description",
+            source=source,
+        )
+    ]
+
+    caplog.set_level("WARNING")
+    translated = translator.translate(entries)
+
+    exception_path = debug_dir / "exception.txt"
+
+    assert len(translated) == 1
+    assert "<strong>" not in translated[0].source
+    assert exception_path.exists() is False
+    assert "@UUID[" in translated[0].source
+
+    warning_records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "tolerated missing placeholders; continuing translation"
+    ]
+    assert warning_records
+    warning = warning_records[0]
+    assert getattr(warning, "rule", None) == "E1_TOLERATED_MISSING"
+    assert getattr(warning, "severity", None) == "WARNING"
+    assert set(getattr(warning, "placeholders", [])) == strong_placeholders
+    assert getattr(warning, "pipeline_continues", None) is True
 
 
 def test_strip_appended_original_protected_source_keeps_normal_translation() -> None:

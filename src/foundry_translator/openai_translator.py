@@ -12,6 +12,7 @@ import re
 import time
 from dataclasses import dataclass
 from dataclasses import replace
+from enum import Enum
 from typing import Any
 
 from openai import APIConnectionError
@@ -75,6 +76,24 @@ class PlaceholderMismatchDetails:
     actual_placeholders: list[str]
     missing_placeholders: list[str]
     unexpected_placeholders: list[str]
+
+
+class MismatchDecisionAction(str, Enum):
+    """Decision emitted by mismatch policy."""
+
+    FATAL = "fatal"
+    WARNING = "warning"
+
+
+@dataclass(slots=True)
+class MismatchDecision:
+    """Outcome of placeholder mismatch policy evaluation."""
+
+    action: MismatchDecisionAction
+    missing_placeholders: list[str]
+    rule: str | None = None
+    severity: str | None = None
+    reason: str | None = None
 
 
 TRANSLATION_RESPONSE_SCHEMA: dict[str, Any] = {
@@ -158,6 +177,7 @@ class OpenAITranslator:
         self._progress_context: dict[str, Any] | None = None
         self._last_prompt_for_count_error: str = ""
         self._last_response_for_count_error: str = ""
+        self._last_response_metadata_for_count_error: dict[str, Any] = {}
 
     def translate_batch(
         self,
@@ -214,6 +234,7 @@ class OpenAITranslator:
             prompt_path, response_path = self._persist_failed_count_debug_artifacts(
                 prompt=prompt,
                 response_text=response_text,
+                response_metadata=self._last_response_metadata_for_count_error,
             )
             self.logger.warning(
                 "translation count mismatch after all batches",
@@ -270,6 +291,7 @@ class OpenAITranslator:
 
         translated_protected_texts: list[str] = []
         translated_protected_origins: list[str] = []
+        tolerated_protected_overrides: dict[str, ProtectedText] = {}
         for batch_number, chunk in enumerate(batches, start=1):
             self._progress_context["current_batch"] = batch_number
             self._progress_context["current_file"] = None
@@ -317,7 +339,34 @@ class OpenAITranslator:
                     translated_chunk_origins[position] = "fresh_retry"
                 mismatches = self._collect_placeholder_mismatches(chunk, translated_chunk)
                 if mismatches:
-                    raise self._raise_placeholder_mismatch_after_retry(mismatches)
+                    fatal_mismatches: list[PlaceholderMismatchDetails] = []
+                    for mismatch in mismatches:
+                        decision = self._decide_mismatch_after_retry(mismatch)
+                        if decision.action == MismatchDecisionAction.FATAL:
+                            fatal_mismatches.append(mismatch)
+                            continue
+
+                        source = chunk[mismatch.chunk_index][0]
+                        tolerated_protected_overrides[source] = self._without_tolerated_placeholders(
+                            mismatch.protected_text,
+                            decision.missing_placeholders,
+                        )
+                        self.logger.warning(
+                            "tolerated missing placeholders; continuing translation",
+                            extra={
+                                "rule": decision.rule,
+                                "severity": decision.severity,
+                                "placeholders": decision.missing_placeholders,
+                                "reason": decision.reason,
+                                "file": str(mismatch.entry.file),
+                                "field": mismatch.entry.field,
+                                "json_path": self._render_json_path(mismatch.entry.path),
+                                "pipeline_continues": True,
+                            },
+                        )
+
+                    if fatal_mismatches:
+                        raise self._raise_placeholder_mismatch_after_retry(fatal_mismatches)
 
             translated_protected_texts.extend(translated_chunk)
             translated_protected_origins.extend(translated_chunk_origins)
@@ -330,6 +379,7 @@ class OpenAITranslator:
             translated_protected_origins,
             strict=True,
         ):
+            protected_text_for_restore = tolerated_protected_overrides.get(source, protected_text)
             entry_index, entry = matching_entries[0]
             if getattr(self, "_resume_diagnostics_active", False) and not first_restore_logged:
                 first_restore_logged = True
@@ -343,18 +393,18 @@ class OpenAITranslator:
                     self._render_json_path(entry.path),
                 )
             try:
-                restored_source = self._restore_protected_text(protected_text, translated_protected_text)
+                restored_source = self._restore_protected_text(protected_text_for_restore, translated_protected_text)
             except ValueError as exc:
                 sanitized_translated_text, restored_attempt, _ = self._prepare_restore_attempt(
-                    protected_text,
+                    protected_text_for_restore,
                     translated_protected_text,
                 )
-                original_placeholders = list(protected_text.placeholders.keys())
+                original_placeholders = list(protected_text_for_restore.placeholders.keys())
                 placeholders_after_restore = self._extract_placeholders_from_text(restored_attempt)
                 debug_dir = self._persist_restore_debug_artifacts(
                     exception_message=str(exc),
-                    original_source=protected_text.original,
-                    protected_source=protected_text.protected,
+                    original_source=protected_text_for_restore.original,
+                    protected_source=protected_text_for_restore.protected,
                     translated_protected=translated_protected_text,
                     sanitized_translated=sanitized_translated_text,
                     placeholders_before_restore=original_placeholders,
@@ -391,6 +441,86 @@ class OpenAITranslator:
 
         return [result for result in results if result is not None]
 
+    def _decide_mismatch_after_retry(self, mismatch: PlaceholderMismatchDetails) -> MismatchDecision:
+        if mismatch.unexpected_placeholders:
+            return MismatchDecision(
+                action=MismatchDecisionAction.FATAL,
+                missing_placeholders=mismatch.missing_placeholders,
+            )
+
+        if self._is_e1_tolerable_missing_empty_strong_pair(mismatch):
+            return MismatchDecision(
+                action=MismatchDecisionAction.WARNING,
+                missing_placeholders=mismatch.missing_placeholders,
+                rule="E1_TOLERATED_MISSING",
+                severity="WARNING",
+                reason="missing tolerated placeholder pair recognized by E1",
+            )
+
+        return MismatchDecision(
+            action=MismatchDecisionAction.FATAL,
+            missing_placeholders=mismatch.missing_placeholders,
+        )
+
+    def _is_e1_tolerable_missing_empty_strong_pair(self, mismatch: PlaceholderMismatchDetails) -> bool:
+        if len(mismatch.missing_placeholders) != 2:
+            return False
+
+        protected_mapping = mismatch.protected_text.placeholders
+        originals: dict[str, str] = {}
+        for placeholder_name in mismatch.missing_placeholders:
+            placeholder = protected_mapping.get(placeholder_name)
+            if not hasattr(placeholder, "original") or not hasattr(placeholder, "category"):
+                return False
+            if placeholder.category != "HTML":
+                return False
+            originals[placeholder_name] = str(placeholder.original)
+
+        if set(originals.values()) != {"<strong>", "</strong>"}:
+            return False
+
+        expected_order = mismatch.expected_placeholders
+        try:
+            open_name = next(name for name, value in originals.items() if value == "<strong>")
+            close_name = next(name for name, value in originals.items() if value == "</strong>")
+            open_index = expected_order.index(open_name)
+            close_index = expected_order.index(close_name)
+        except (StopIteration, ValueError):
+            return False
+
+        if close_index != open_index + 1:
+            return False
+
+        masked_text = mismatch.protected_text.protected
+        open_pos = masked_text.find(open_name)
+        close_pos = masked_text.find(close_name)
+        if open_pos == -1 or close_pos == -1:
+            return False
+
+        between = masked_text[open_pos + len(open_name):close_pos]
+        return between.strip() == ""
+
+    def _without_tolerated_placeholders(
+        self,
+        protected_text: ProtectedText,
+        tolerated_placeholders: list[str],
+    ) -> ProtectedText:
+        placeholders = {
+            key: value
+            for key, value in protected_text.placeholders.items()
+            if key not in set(tolerated_placeholders)
+        }
+
+        masked_text = protected_text.protected
+        for placeholder_name in tolerated_placeholders:
+            masked_text = masked_text.replace(placeholder_name, "")
+
+        return ProtectedText(
+            original=protected_text.original,
+            protected=masked_text,
+            placeholders=placeholders,
+        )
+
     def _split_texts_into_prompt_batches(
         self,
         texts: list[str],
@@ -412,7 +542,9 @@ class OpenAITranslator:
                 target_language=target_language,
                 glossary=glossary,
             )
-            if current_batch and len(candidate_prompt) > self.max_prompt_chars:
+            exceeds_prompt_chars = len(candidate_prompt) > self.max_prompt_chars
+            exceeds_max_items = len(candidate_batch) > self.batch_size
+            if current_batch and (exceeds_prompt_chars or exceeds_max_items):
                 batches.append(current_batch)
                 current_batch = [text]
             else:
@@ -439,7 +571,9 @@ class OpenAITranslator:
                 source_language="English",
                 target_language=self.target_language,
             )
-            if current_batch and len(candidate_prompt) > self.max_prompt_chars:
+            exceeds_prompt_chars = len(candidate_prompt) > self.max_prompt_chars
+            exceeds_max_items = len(candidate_batch) > self.batch_size
+            if current_batch and (exceeds_prompt_chars or exceeds_max_items):
                 batches.append(current_batch)
                 current_batch = [group]
             else:
@@ -483,13 +617,38 @@ class OpenAITranslator:
         if not texts:
             return []
 
-        prompt = self._build_prompt(
-            texts,
+        request_items = self._build_request_items(texts)
+        return self._translate_request_items_with_resilience(
+            request_items,
+            source_language=source_language,
+            target_language=target_language,
+            glossary=glossary,
+            batch_number=batch_number,
+            total_batches=total_batches,
+        )
+
+    def _translate_request_items_with_resilience(
+        self,
+        request_items: list[dict[str, Any]],
+        *,
+        source_language: str,
+        target_language: str,
+        glossary: dict[str, str] | None = None,
+        batch_number: int = 1,
+        total_batches: int = 1,
+    ) -> list[str]:
+        if not request_items:
+            return []
+
+        texts = [str(item["text"]) for item in request_items]
+        requested_ids = [int(item["id"]) for item in request_items]
+
+        prompt = self._build_prompt_from_request_items(
+            request_items,
             source_language=source_language,
             target_language=target_language,
             glossary=glossary,
         )
-        requested_ids = [index for index, _ in enumerate(texts, start=1)]
         self._log_batch_start(texts, batch_number=batch_number, total_batches=total_batches, prompt=prompt)
 
         for attempt in range(1, self.max_retries + 1):
@@ -500,7 +659,52 @@ class OpenAITranslator:
                 self._last_prompt_for_count_error = prompt
                 self._last_response_for_count_error = response_text
                 duration = time.perf_counter() - started_at
-                translations = self._parse_response(response_text, requested_ids=requested_ids)
+
+                translations_by_id, missing_ids = self._parse_response_translations_by_id(
+                    response_text,
+                    requested_ids=requested_ids,
+                )
+
+                if missing_ids and len(missing_ids) < len(requested_ids):
+                    self.logger.warning(
+                        "partial translation response detected; retrying missing ids only",
+                        extra={
+                            "batch_number": batch_number,
+                            "total_batches": total_batches,
+                            "batch_size": len(texts),
+                            "attempt": attempt,
+                            "missing_ids": missing_ids,
+                            "received_ids": sorted(translations_by_id.keys()),
+                        },
+                    )
+                    missing_request_items = [
+                        item for item in request_items if int(item["id"]) in set(missing_ids)
+                    ]
+                    recovered_translations = self._translate_request_items_with_resilience(
+                        missing_request_items,
+                        source_language=source_language,
+                        target_language=target_language,
+                        glossary=glossary,
+                        batch_number=batch_number,
+                        total_batches=total_batches,
+                    )
+                    for missing_id, recovered_translation in zip(
+                        missing_ids,
+                        recovered_translations,
+                        strict=True,
+                    ):
+                        translations_by_id[missing_id] = recovered_translation
+
+                    unresolved_ids = [identifier for identifier in requested_ids if identifier not in translations_by_id]
+                    if unresolved_ids:
+                        raise OpenAITranslatorCountError(
+                            f"Missing translation ids in response: {unresolved_ids}"
+                        )
+
+                elif missing_ids:
+                    raise OpenAITranslatorCountError(f"Missing translation ids in response: {missing_ids}")
+
+                translations = [translations_by_id[identifier] for identifier in requested_ids]
                 self.logger.info(
                     "translations completed",
                     extra={
@@ -518,6 +722,7 @@ class OpenAITranslator:
                 prompt_path, response_path = self._persist_failed_count_debug_artifacts(
                     prompt=prompt,
                     response_text=response_text or "",
+                    response_metadata=self._last_response_metadata_for_count_error,
                 )
                 self.logger.warning(
                     "translation response parse/validation failed",
@@ -632,6 +837,21 @@ class OpenAITranslator:
             )
             raise
 
+        response_metadata = self._extract_response_metadata(response)
+        self._last_response_metadata_for_count_error = response_metadata
+        self.logger.info(
+            "received OpenAI response metadata",
+            extra={
+                "response_status": response_metadata.get("status"),
+                "response_incomplete_details": response_metadata.get("incomplete_details"),
+                "response_usage": response_metadata.get("usage"),
+                "response_max_output_tokens": response_metadata.get("max_output_tokens"),
+                "response_output_items": len(response_metadata.get("output", []))
+                if isinstance(response_metadata.get("output"), list)
+                else None,
+            },
+        )
+
         elapsed = time.perf_counter() - started_at
         output_text = getattr(response, "output_text", "")
         self._report_progress(
@@ -643,6 +863,55 @@ class OpenAITranslator:
             output_text=output_text,
         )
         return output_text
+
+    def _extract_response_metadata(self, response: Any) -> dict[str, Any]:
+        return {
+            "status": self._to_jsonable(getattr(response, "status", None)),
+            "incomplete_details": self._to_jsonable(getattr(response, "incomplete_details", None)),
+            "usage": self._to_jsonable(getattr(response, "usage", None)),
+            "output": self._to_jsonable(getattr(response, "output", None)),
+            "max_output_tokens": self._to_jsonable(getattr(response, "max_output_tokens", None)),
+        }
+
+    def _to_jsonable(self, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+
+        if isinstance(value, dict):
+            return {str(key): self._to_jsonable(item) for key, item in value.items()}
+
+        if isinstance(value, (list, tuple)):
+            return [self._to_jsonable(item) for item in value]
+
+        if hasattr(value, "model_dump"):
+            try:
+                return self._to_jsonable(value.model_dump())
+            except Exception:
+                pass
+
+        if hasattr(value, "to_dict"):
+            try:
+                return self._to_jsonable(value.to_dict())
+            except Exception:
+                pass
+
+        if hasattr(value, "dict"):
+            try:
+                return self._to_jsonable(value.dict())
+            except Exception:
+                pass
+
+        if hasattr(value, "__dict__"):
+            try:
+                return {
+                    str(key): self._to_jsonable(item)
+                    for key, item in value.__dict__.items()
+                    if not str(key).startswith("_")
+                }
+            except Exception:
+                pass
+
+        return str(value)
 
     def _report_progress(
         self,
@@ -862,17 +1131,30 @@ class OpenAITranslator:
         debug_dir = project_root / "debug"
         return debug_dir / f"restore_duplicate_placeholders_{time.time_ns()}"
 
-    def _persist_failed_count_debug_artifacts(self, *, prompt: str, response_text: str) -> tuple[Path, Path]:
+    def _persist_failed_count_debug_artifacts(
+        self,
+        *,
+        prompt: str,
+        response_text: str,
+        response_metadata: dict[str, Any] | None = None,
+    ) -> tuple[Path, Path]:
         prompt_path, response_path = self._get_debug_artifact_paths()
+        metadata_path = response_path.with_name("failed_response_metadata.json")
         try:
             prompt_path.parent.mkdir(parents=True, exist_ok=True)
             prompt_path.write_text(prompt, encoding="utf-8")
             response_path.write_text(response_text, encoding="utf-8")
+            metadata_payload = response_metadata or self._last_response_metadata_for_count_error
+            metadata_path.write_text(
+                json.dumps(metadata_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
             self.logger.info(
                 "saved OpenAI response debug artifacts",
                 extra={
                     "prompt_path": str(prompt_path.resolve()),
                     "response_path": str(response_path.resolve()),
+                    "response_metadata_path": str(metadata_path.resolve()),
                     "prompt_length": len(prompt),
                     "response_length": len(response_text),
                 },
@@ -883,6 +1165,7 @@ class OpenAITranslator:
                 extra={
                     "prompt_path": str(prompt_path.resolve()),
                     "response_path": str(response_path.resolve()),
+                    "response_metadata_path": str(metadata_path.resolve()),
                     "error": str(exc),
                 },
             )
@@ -1321,6 +1604,21 @@ class OpenAITranslator:
         target_language: str,
         glossary: dict[str, str] | None = None,
     ) -> str:
+        return self._build_prompt_from_request_items(
+            self._build_request_items(texts),
+            source_language=source_language,
+            target_language=target_language,
+            glossary=glossary,
+        )
+
+    def _build_prompt_from_request_items(
+        self,
+        request_items: list[dict[str, Any]],
+        *,
+        source_language: str,
+        target_language: str,
+        glossary: dict[str, str] | None = None,
+    ) -> str:
         instructions = [
             f"Translate the following texts from {source_language} to {target_language}.",
             "Return only a JSON object with a translations array.",
@@ -1335,13 +1633,18 @@ class OpenAITranslator:
                 instructions.append(f"{term} -> {translation}")
 
         lines = ["\n".join(instructions), "", "Inputs JSON:"]
-        lines.append(json.dumps(self._build_request_items(texts), ensure_ascii=False, indent=2))
+        lines.append(json.dumps(request_items, ensure_ascii=False, indent=2))
 
         return "\n".join(lines)
 
-    def _parse_response(self, response_text: str, *, requested_ids: list[int]) -> list[str]:
+    def _parse_response_translations_by_id(
+        self,
+        response_text: str,
+        *,
+        requested_ids: list[int],
+    ) -> tuple[dict[int, str], list[int]]:
         if not response_text:
-            raise OpenAITranslatorCountError(f"Expected {len(requested_ids)} translations but received 0")
+            return {}, requested_ids
 
         text = response_text.strip()
         try:
@@ -1390,6 +1693,14 @@ class OpenAITranslator:
         if unexpected_ids:
             extras = sorted(set(unexpected_ids))
             raise OpenAITranslatorCountError(f"Unexpected translation ids in response: {extras}")
+
+        return translations_by_id, missing_ids
+
+    def _parse_response(self, response_text: str, *, requested_ids: list[int]) -> list[str]:
+        translations_by_id, missing_ids = self._parse_response_translations_by_id(
+            response_text,
+            requested_ids=requested_ids,
+        )
         if missing_ids:
             raise OpenAITranslatorCountError(f"Missing translation ids in response: {missing_ids}")
 
