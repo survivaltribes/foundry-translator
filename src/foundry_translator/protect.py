@@ -48,6 +48,7 @@ class Protect:
         r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
     )
     _MARKDOWN_LINK_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[[^\]]+\]\([^\)]+\)")
+    _BRACKET_REFERENCE_PATTERN: Final[re.Pattern[str]] = re.compile(r"\[[^\[\]\r\n]+\]")
     _HTML_TAG_PATTERN: Final[re.Pattern[str]] = re.compile(r"<[^>]+>")
     _ATTRIBUTE_PATTERN: Final[re.Pattern[str]] = re.compile(r'\b([a-zA-Z_:][-a-zA-Z0-9_:.]*)="[^"]*"')
     _ROLL_COMMAND_PATTERN: Final[re.Pattern[str]] = re.compile(
@@ -66,6 +67,7 @@ class Protect:
         ("MACRO", _MACRO_PATTERN),
         ("UUID_TOKEN", _UUID_TOKEN_PATTERN),
         ("MARKDOWN_LINK", _MARKDOWN_LINK_PATTERN),
+        ("BRACKET_REFERENCE", _BRACKET_REFERENCE_PATTERN),
         ("HTML", _HTML_TAG_PATTERN),
         ("ATTRIBUTE", _ATTRIBUTE_PATTERN),
         ("ROLL_COMMAND", _ROLL_COMMAND_PATTERN),
